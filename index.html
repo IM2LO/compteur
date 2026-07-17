@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0d10">
+  <meta name="color-scheme" content="dark">
+  <title>Cap Contrat</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <button class="brand" type="button" data-go="home" aria-label="Revenir à l'accueil">
+        <span class="brand-mark" aria-hidden="true">C</span>
+        <span><strong id="contractNameHeader">Cap Contrat</strong><small id="headerDate">Aujourd'hui</small></span>
+      </button>
+      <button class="icon-button" id="openSettings" type="button" aria-label="Ouvrir les réglages" title="Réglages">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.96 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1H3v-4h.08A1.7 1.7 0 0 0 4.6 8.96a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.56V3h4v.08A1.7 1.7 0 0 0 15.04 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.15.6.68 1 1.3 1H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z"/></svg>
+      </button>
+    </header>
+
+    <main class="app-main">
+      <section class="view active" id="view-home" aria-labelledby="homeTitle">
+        <div class="mission-intro">
+          <p class="kicker">Mission en cours</p>
+          <h1 id="homeTitle">Garder le cap.</h1>
+          <p id="contractRange">Du -- au --</p>
+        </div>
+
+        <section class="time-rail" aria-label="Progression du contrat">
+          <div class="rail-heading">
+            <div><span>Progression réelle</span><strong id="progressPercent">0 %</strong></div>
+            <span class="level-pill" id="levelPill">Niveau 1</span>
+          </div>
+          <div class="rail-track" aria-hidden="true">
+            <span class="rail-fill" id="progressFill"></span>
+            <span class="rail-marker" id="progressMarker"><i></i></span>
+          </div>
+          <div class="rail-labels"><span>Départ</span><span id="railToday">Aujourd'hui</span><span>Arrivée</span></div>
+        </section>
+
+        <section class="countdown-hero" aria-label="Temps restant">
+          <div class="countdown-copy">
+            <span>Encore</span>
+            <strong><b id="countDays">0</b> jours</strong>
+            <small id="countdownDetail">00 h · 00 min · 00 s</small>
+          </div>
+          <div class="day-slice" aria-hidden="true"><span id="daySlice"></span></div>
+        </section>
+
+        <section class="next-stop" id="nextStop" aria-labelledby="nextStopTitle">
+          <div class="stop-line" aria-hidden="true"><i></i></div>
+          <div>
+            <span class="section-caption">Prochaine étape</span>
+            <h2 id="nextStopTitle">Aucun jalon à venir</h2>
+            <p id="nextStopDate">Ajoute une date importante à ta trajectoire.</p>
+          </div>
+          <button class="arrow-button" type="button" data-go="milestones" aria-label="Voir les jalons">›</button>
+        </section>
+
+        <div class="metric-strip" aria-label="Indicateurs du contrat">
+          <article><span>Jours faits</span><strong id="daysPassed">0</strong><small id="daysTotal">sur 0</small></article>
+          <article><span>Travail restant</span><strong id="workRemaining">0</strong><small>jours</small></article>
+          <article><span>Semaines</span><strong id="weeksRemaining">0</strong><small>restantes</small></article>
+        </div>
+
+        <section class="daily-brief">
+          <div class="section-heading"><div><span class="section-caption">Brief du jour</span><h2 id="todayStatus">Une journée de plus</h2></div><span class="status-dot" id="todayStatusDot"></span></div>
+          <p id="dailyMessage">Le compteur avance, même quand on ne le regarde pas.</p>
+          <div class="mini-progress"><span id="weekProgress"></span></div>
+          <div class="brief-meta"><span id="weekLabel">Semaine 1</span><span id="nextWorkLabel">Prochain service : --</span></div>
+        </section>
+      </section>
+
+      <section class="view" id="view-calendar" aria-labelledby="calendarTitle">
+        <div class="view-title">
+          <div><p class="kicker">Trajectoire</p><h1 id="calendarTitle">Calendrier</h1></div>
+          <button class="text-button" id="jumpCurrentMonth" type="button">Ce mois</button>
+        </div>
+        <div class="segmented-control" id="calendarFilter" aria-label="Filtrer le calendrier">
+          <button class="active" type="button" data-filter="all">Tout</button>
+          <button type="button" data-filter="work">Travail</button>
+          <button type="button" data-filter="off">Repos</button>
+        </div>
+        <div class="calendar-legend" aria-label="Légende du calendrier">
+          <span><i class="legend-work"></i>Travaillé</span>
+          <span><i class="legend-off"></i>Repos</span>
+          <span><i class="legend-milestone"></i>Jalon</span>
+        </div>
+        <div class="calendar-list" id="calendarList"></div>
+      </section>
+
+      <section class="view" id="view-milestones" aria-labelledby="milestonesTitle">
+        <div class="view-title">
+          <div><p class="kicker">Points de repère</p><h1 id="milestonesTitle">Jalons</h1></div>
+          <button class="round-action" id="addMilestone" type="button" aria-label="Ajouter un jalon">+</button>
+        </div>
+        <div class="milestone-summary">
+          <div><strong id="milestoneUpcomingCount">0</strong><span>à venir</span></div>
+          <div><strong id="milestoneImportantCount">0</strong><span>importants</span></div>
+          <div><strong id="milestoneDoneCount">0</strong><span>franchis</span></div>
+        </div>
+        <div class="milestone-timeline" id="milestoneList"></div>
+      </section>
+
+      <section class="view" id="view-stats" aria-labelledby="statsTitle">
+        <div class="view-title"><div><p class="kicker">Tableau de bord</p><h1 id="statsTitle">Rythme</h1></div></div>
+        <section class="level-banner">
+          <div class="level-medal" id="levelMedal">1</div>
+          <div><span id="levelName">Premier pas</span><h2 id="xpLabel">0 XP</h2><p id="nextLevelLabel">Prochain niveau dans 100 XP</p></div>
+          <div class="xp-ring" id="xpRing" aria-label="Progression du niveau"><span id="xpPercent">0 %</span></div>
+        </section>
+
+        <section class="stats-block">
+          <div class="section-heading"><div><span class="section-caption">Jours travaillés</span><h2 id="workStatsTitle">0 sur 0</h2></div><strong id="workPercent">0 %</strong></div>
+          <div class="shift-summary" aria-label="Résumé du planning">
+            <div><strong id="scheduledHours">0 h</strong><span>planifiées</span></div>
+            <div><strong id="hsmCount">0</strong><span>HSM</span></div>
+            <div><strong id="sttCount">0</strong><span>STT</span></div>
+            <div><strong id="planningFill">0 %</strong><span>renseigné</span></div>
+          </div>
+          <div class="work-matrix" id="workMatrix" aria-label="Grille des jours travaillés"></div>
+          <div class="calendar-legend"><span><i class="legend-done"></i>Fait</span><span><i class="legend-today"></i>Aujourd'hui</span><span><i class="legend-hsm"></i>HSM</span><span><i class="legend-stt"></i>STT</span></div>
+          <p class="planning-hint">Chaque ligne de 10 cases représente une quinzaine de travail. Touche une journée pour compléter son shift.</p>
+        </section>
+
+        <section class="stats-block">
+          <div class="section-heading"><div><span class="section-caption">Découpage</span><h2>Semaines</h2></div><strong id="weekCountLabel">0</strong></div>
+          <div class="week-list" id="weekList"></div>
+        </section>
+
+        <section class="stats-block achievements-block">
+          <div class="section-heading"><div><span class="section-caption">Collection</span><h2>100 trophées</h2></div><strong id="achievementCount">0/100</strong></div>
+          <div class="segmented-control trophy-filter" id="trophyFilter" aria-label="Filtrer les trophées">
+            <button class="active" type="button" data-trophy-filter="next">À suivre</button>
+            <button type="button" data-trophy-filter="unlocked">Débloqués</button>
+            <button type="button" data-trophy-filter="all">Tous</button>
+          </div>
+          <div class="achievement-grid" id="achievementGrid"></div>
+        </section>
+      </section>
+
+      <section class="view" id="view-game" aria-labelledby="gameTitle">
+        <div class="game-head">
+          <p class="kicker">Compagnon de route</p>
+          <h1 id="gameTitle">Tempo</h1>
+          <p>Il vit au rythme réel du contrat. Prends-en soin quelques instants chaque jour.</p>
+        </div>
+        <section class="pet-world" id="petWorld" aria-label="Maison de Tempo">
+          <div class="pet-sky" aria-hidden="true"><i></i><i></i><i></i></div>
+          <div class="pet-hud"><span>Âge <strong id="petAge">Jour 1</strong></span><span>Niveau <strong id="petLevel">1</strong></span><span>Série <strong id="petStreak">1 j</strong></span></div>
+          <div class="pet-speech" id="petSpeech">On garde le cap ensemble ?</div>
+          <div class="pet-room" id="petRoom">
+            <div class="pet-plant" aria-hidden="true"><i></i><i></i><i></i></div>
+            <div class="pet-avatar" id="petAvatar" aria-label="Tempo est en forme">
+              <i class="pet-ear left"></i><i class="pet-ear right"></i>
+              <div class="pet-face"><i class="pet-eye left"></i><i class="pet-eye right"></i><i class="pet-mouth"></i></div>
+              <div class="pet-body"><i></i></div>
+            </div>
+            <div class="pet-shadow" aria-hidden="true"></div>
+          </div>
+        </section>
+
+        <section class="pet-needs" aria-label="Besoins de Tempo">
+          <div><span>Faim</span><div><i id="petFoodBar"></i></div><strong id="petFood">0 %</strong></div>
+          <div><span>Énergie</span><div><i id="petEnergyBar"></i></div><strong id="petEnergy">0 %</strong></div>
+          <div><span>Humeur</span><div><i id="petMoodBar"></i></div><strong id="petMood">0 %</strong></div>
+          <div><span>Propreté</span><div><i id="petCleanBar"></i></div><strong id="petClean">0 %</strong></div>
+        </section>
+
+        <div class="pet-actions" aria-label="Prendre soin de Tempo">
+          <button type="button" data-pet-action="feed"><i>+</i><strong>Nourrir</strong><span>Faim +24</span></button>
+          <button type="button" data-pet-action="play"><i>♪</i><strong>Jouer</strong><span>Humeur +22</span></button>
+          <button type="button" data-pet-action="clean"><i>✦</i><strong>Nettoyer</strong><span>Propreté +30</span></button>
+          <button type="button" data-pet-action="rest"><i>☾</i><strong>Repos</strong><span>Énergie +28</span></button>
+        </div>
+
+        <section class="pet-journal">
+          <div class="section-heading"><div><span class="section-caption">Journal de Tempo</span><h2 id="petStatusTitle">Tout va bien</h2></div><strong id="petXp">0 XP</strong></div>
+          <p id="petStatusText">Tempo découvre sa nouvelle maison.</p>
+          <div class="pet-meta"><span><b id="petActionsCount">0</b> soins réalisés</span><span>Dernière visite : <b id="petLastVisit">maintenant</b></span></div>
+        </section>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Navigation principale">
+      <button class="active" type="button" data-view="home" aria-label="Accueil"><span class="nav-icon">⌂</span><small>Accueil</small></button>
+      <button type="button" data-view="calendar" aria-label="Calendrier"><span class="nav-icon">▦</span><small>Calendrier</small></button>
+      <button type="button" data-view="milestones" aria-label="Jalons"><span class="nav-icon">◆</span><small>Jalons</small></button>
+      <button type="button" data-view="stats" aria-label="Rythme"><span class="nav-icon">↗</span><small>Rythme</small></button>
+      <button type="button" data-view="game" aria-label="Bonus"><span class="nav-icon">▶</span><small>Bonus</small></button>
+    </nav>
+  </div>
+
+  <div class="sheet-backdrop" id="sheetBackdrop" hidden></div>
+
+  <section class="bottom-sheet" id="milestoneSheet" role="dialog" aria-modal="true" aria-labelledby="milestoneSheetTitle" hidden>
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div class="sheet-header"><div><span class="section-caption">Point de repère</span><h2 id="milestoneSheetTitle">Nouveau jalon</h2></div><button class="close-button" type="button" data-close-sheet aria-label="Fermer">×</button></div>
+    <form id="milestoneForm">
+      <input id="milestoneEditId" type="hidden">
+      <label class="field"><span>Nom</span><input id="milestoneName" type="text" maxlength="42" placeholder="Ex. Dernière ligne droite" required></label>
+      <label class="field"><span>Date</span><input id="milestoneDate" type="date" required></label>
+      <fieldset class="color-field"><legend>Couleur dans le calendrier</legend><div id="colorOptions"></div></fieldset>
+      <label class="toggle-row"><span><strong>Jalon important</strong><small>Lueur rouge animée dans le calendrier</small></span><input id="milestoneImportant" type="checkbox"><i></i></label>
+      <div class="sheet-actions"><button class="primary-button" id="saveMilestone" type="submit">Ajouter le jalon</button><button class="danger-button" id="deleteMilestone" type="button" hidden>Supprimer</button></div>
+    </form>
+  </section>
+
+  <section class="bottom-sheet settings-sheet" id="settingsSheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle" hidden>
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div class="sheet-header"><div><span class="section-caption">Personnalisation</span><h2 id="settingsTitle">Réglages</h2></div><button class="close-button" type="button" data-close-sheet aria-label="Fermer">×</button></div>
+    <form id="settingsForm">
+      <label class="field"><span>Nom du contrat</span><input id="contractNameInput" type="text" maxlength="32" required></label>
+      <label class="field"><span>Nom du compagnon</span><input id="petNameInput" type="text" maxlength="16" required></label>
+      <div class="field-pair"><label class="field"><span>Début</span><input id="contractStartInput" type="date" required></label><label class="field"><span>Fin</span><input id="contractEndInput" type="date" required></label></div>
+      <fieldset class="rest-field"><legend>Jours non travaillés</legend><div id="restDayOptions"></div></fieldset>
+      <button class="primary-button" type="submit">Enregistrer les réglages</button>
+    </form>
+    <section class="backup-zone">
+      <span class="section-caption">Données locales</span>
+      <h3>Sauvegarde complète</h3>
+      <p>Exporte les réglages, les jalons et Tempo dans un fichier conservé hors du navigateur. Le planning garde son propre fichier séparé.</p>
+      <div class="backup-actions"><button id="exportBackup" type="button">Exporter</button><button id="importBackup" type="button">Importer</button><input id="backupFile" type="file" accept="application/json,.json" hidden></div>
+      <p class="backup-status" id="backupStatus" aria-live="polite"></p>
+    </section>
+    <section class="backup-zone shift-backup-zone">
+      <span class="section-caption">Planning quotidien</span>
+      <h3>Fichier des shifts</h3>
+      <p>Ce fichier JSON contient uniquement les horaires, attractions, jours travaillés et notes. Il est séparé des jalons.</p>
+      <div class="backup-actions"><button id="exportShifts" type="button">Exporter les shifts</button><button id="importShifts" type="button">Importer</button><input id="shiftBackupFile" type="file" accept="application/json,.json" hidden></div>
+      <p class="backup-status" id="shiftBackupStatus" aria-live="polite"></p>
+    </section>
+  </section>
+
+  <section class="bottom-sheet day-sheet" id="daySheet" role="dialog" aria-modal="true" aria-labelledby="daySheetTitle" hidden>
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div class="sheet-header"><div><span class="section-caption">Planning du jour</span><h2 id="daySheetTitle">Journée</h2><p id="daySheetDate"></p></div><button class="close-button" type="button" data-close-sheet aria-label="Fermer">×</button></div>
+    <form id="dayForm">
+      <input id="dayEditDate" type="hidden">
+      <label class="toggle-row"><span><strong>Journée travaillée</strong><small>La journée apparaîtra dans les quinzaines</small></span><input id="dayWorked" type="checkbox"><i></i></label>
+      <div class="field-pair shift-time-fields"><label class="field"><span>Début du shift</span><input id="shiftStart" type="time"></label><label class="field"><span>Fin du shift</span><input id="shiftEnd" type="time"></label></div>
+      <fieldset class="attraction-field"><legend>Attraction attitrée</legend><div><label><input type="radio" name="attraction" value="HSM"><span>HSM</span></label><label><input type="radio" name="attraction" value="STT"><span>STT</span></label><label><input type="radio" name="attraction" value=""><span>Aucune</span></label></div></fieldset>
+      <label class="field"><span>Note de journée</span><input id="shiftNote" type="text" maxlength="100" placeholder="Équipe, événement, souvenir..."></label>
+      <div class="shift-duration"><span>Durée calculée</span><strong id="shiftDuration">--</strong></div>
+      <div class="sheet-actions"><button class="primary-button" type="submit">Enregistrer la journée</button><button class="danger-button" id="resetDay" type="button">Rétablir le planning par défaut</button></div>
+    </form>
+  </section>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>
