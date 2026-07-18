@@ -1,9 +1,10 @@
 (function (root, factory) {
   "use strict";
-  const api = factory();
+  const breaks = typeof module === "object" && module.exports ? require("./breaks.js") : root && root.CapBreaks;
+  const api = factory(breaks);
   if (typeof module === "object" && module.exports) module.exports = api;
   if (root) root.CapPayroll = api;
-}(typeof globalThis !== "undefined" ? globalThis : this, function () {
+}(typeof globalThis !== "undefined" ? globalThis : this, function (CapBreaks) {
   "use strict";
 
   const CONSTANTS = Object.freeze({
@@ -48,10 +49,9 @@
   }
 
   function automaticBreakMinutes(amplitudeMinutes) {
-    if (amplitudeMinutes <= 0) return 0;
-    if (amplitudeMinutes <= 435) return 15;
-    if (amplitudeMinutes <= 540) return 60;
-    return 75;
+    if (!CapBreaks || amplitudeMinutes <= 0) return 0;
+    const code = CapBreaks.getPauseRuleForAmplitude(amplitudeMinutes);
+    return CapBreaks.calculateTotalPauseMinutes(CapBreaks.getPauseDefinitions(code));
   }
 
   function resolveWorkInterval(plan) {
@@ -88,6 +88,43 @@
     return minutes;
   }
 
+  function getStructuredPauseIntervals(plan) {
+    if (!CapBreaks || !isTime(plan.start) || !isTime(plan.end)) return [];
+    let pauses = Array.isArray(plan.pauses) ? CapBreaks.normalizePauses(plan.pauses, plan) : null;
+    if (pauses === null && toOptionalMinutes(plan.breakMinutes) === null) {
+      pauses = CapBreaks.recalculateShiftPauses({ id: "payroll", start: plan.start, end: plan.end }).pauses;
+    }
+    if (!pauses) return [];
+    const plannedStart = timeToMinutes(plan.start);
+    return pauses.map((pause) => ({
+      start: plannedStart + pause.startOffsetMinutes,
+      end: plannedStart + pause.endOffsetMinutes
+    }));
+  }
+
+  function calculateRecordedBreaks(plan, interval) {
+    const pauseIntervals = getStructuredPauseIntervals(plan);
+    if (!pauseIntervals.length) {
+      const manualBreak = toOptionalMinutes(plan.breakMinutes);
+      const rawAmplitude = CapBreaks && isTime(plan.start) && isTime(plan.end)
+        ? CapBreaks.calculateShiftAmplitude(plan.start, plan.end)
+        : interval.end - interval.start;
+      return {
+        breakMinutes: manualBreak === null ? automaticBreakMinutes(rawAmplitude) : manualBreak,
+        nightBreakMinutes: Math.max(0, toOptionalMinutes(plan.nightBreakMinutes) || 0)
+      };
+    }
+
+    return pauseIntervals.reduce((totals, pause) => {
+      const start = Math.max(interval.start, pause.start);
+      const end = Math.min(interval.end, pause.end);
+      if (end <= start) return totals;
+      totals.breakMinutes += end - start;
+      totals.nightBreakMinutes += nightOverlapMinutes(start, end);
+      return totals;
+    }, { breakMinutes: 0, nightBreakMinutes: 0 });
+  }
+
   function buildPayrollDay(record) {
     const plan = record && record.plan ? record.plan : {};
     const interval = resolveWorkInterval(plan);
@@ -105,11 +142,11 @@
     if (!interval) return empty;
 
     const amplitudeMinutes = Math.max(0, interval.end - interval.start);
-    const manualBreak = toOptionalMinutes(plan.breakMinutes);
-    const breakMinutes = Math.min(amplitudeMinutes, manualBreak === null ? automaticBreakMinutes(amplitudeMinutes) : manualBreak);
+    const recordedBreaks = calculateRecordedBreaks(plan, interval);
+    const breakMinutes = Math.min(amplitudeMinutes, recordedBreaks.breakMinutes);
     const nightBreakMinutes = Math.min(
       breakMinutes,
-      Math.max(0, toOptionalMinutes(plan.nightBreakMinutes) || 0)
+      Math.max(0, recordedBreaks.nightBreakMinutes)
     );
     const paidMinutes = Math.max(0, amplitudeMinutes - breakMinutes);
     const nightMinutes = Math.min(
