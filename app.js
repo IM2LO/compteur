@@ -6,8 +6,7 @@
   const MILESTONE_STORAGE_KEY = "contract-milestones-v1";
   const SHIFT_STORAGE_KEY = "contract-shifts-v1";
   const SETTINGS_STORAGE_KEY = "contract-tracker-settings-v2";
-  const PET_STORAGE_KEY = "contract-tracker-pet-v3";
-  const LEGACY_GAME_STORAGE_KEY = "contract-tracker-game-v2";
+  const PAYROLL_STORAGE_KEY = "contract-payroll-settings-v1";
   const OPEN_STARTS = new Set(["06:35", "07:50"]);
   const CLOSE_ENDS = new Set(["22:40", "23:25"]);
 
@@ -30,19 +29,12 @@
   const WEEKDAY_SHORT = ["Dim", "Lun", "Mar", "Mer", "Jeu", "Ven", "Sam"];
   const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
   const MONTH_HEAD = ["L", "M", "M", "J", "V", "S", "D"];
-  const PET_ACTIONS = {
-    feed: { food: 24, energy: 2, xp: 8, message: "Miam. Je suis prêt pour la suite !" },
-    play: { mood: 22, energy: -5, clean: -2, xp: 10, message: "Encore une partie ? C'était parfait." },
-    clean: { clean: 30, mood: 3, xp: 9, message: "Tout propre, tout neuf !" },
-    rest: { energy: 28, food: -3, xp: 7, message: "Cette pause m'a fait du bien." }
-  };
-
   const longDate = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   const shortDate = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long" });
   const monthOnly = new Intl.DateTimeFormat("fr-FR", { month: "long" });
   const monthYear = new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric" });
+  const euro = new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  const loadedPet = loadPet();
   const state = {
     activeView: "home",
     calendarFilter: "all",
@@ -52,11 +44,8 @@
     settings: loadSettings(),
     milestones: loadMilestones(),
     shifts: loadShifts(),
-    pet: loadedPet,
-    previousPetVisit: loadedPet.lastVisit,
-    petMessage: "",
-    toastTimer: null,
-    petMessageTimer: null
+    payrollSettings: loadPayrollSettings(),
+    toastTimer: null
   };
 
   const $ = (id) => document.getElementById(id);
@@ -119,6 +108,10 @@
         worked: Boolean(value.worked),
         start: isTime(value.start) ? value.start : "",
         end: isTime(value.end) ? value.end : "",
+        actualStart: isTime(value.actualStart) ? value.actualStart : "",
+        actualEnd: isTime(value.actualEnd) ? value.actualEnd : "",
+        breakMinutes: normalizeOptionalMinutes(value.breakMinutes),
+        nightBreakMinutes: Math.max(0, Math.round(Number(value.nightBreakMinutes) || 0)),
         attraction: value.attraction === "HSM" || value.attraction === "STT" ? value.attraction : "",
         provisional: Boolean(value.provisional),
         note: typeof value.note === "string" ? value.note.trim().slice(0, 100) : ""
@@ -127,45 +120,39 @@
     return normalized;
   }
 
-  function loadPet() {
-    const now = new Date().toISOString();
-    const saved = safeJsonParse(localStorage.getItem(PET_STORAGE_KEY), null);
-    const legacy = safeJsonParse(localStorage.getItem(LEGACY_GAME_STORAGE_KEY), {});
-    const base = {
-      name: "Tempo", bornAt: now, lastUpdate: now, lastVisit: now,
-      food: 82, energy: 78, mood: 84, clean: 80,
-      xp: Math.max(0, Number(legacy.best) || 0), totalActions: 0,
-      actionCounts: { feed: 0, play: 0, clean: 0, rest: 0 }, careDates: [], lastActionAt: 0
-    };
-    if (!saved || typeof saved !== "object") return base;
-    return {
-      ...base,
-      name: typeof saved.name === "string" && saved.name.trim() ? saved.name.trim().slice(0, 16) : base.name,
-      bornAt: isIsoDate(saved.bornAt) ? saved.bornAt : base.bornAt,
-      lastUpdate: isIsoDate(saved.lastUpdate) ? saved.lastUpdate : base.lastUpdate,
-      lastVisit: isIsoDate(saved.lastVisit) ? saved.lastVisit : base.lastVisit,
-      food: normalizeNeed(saved.food, base.food), energy: normalizeNeed(saved.energy, base.energy),
-      mood: normalizeNeed(saved.mood, base.mood), clean: normalizeNeed(saved.clean, base.clean),
-      xp: Math.max(0, Math.floor(Number(saved.xp) || 0)), totalActions: Math.max(0, Math.floor(Number(saved.totalActions) || 0)),
-      actionCounts: { ...base.actionCounts, ...(saved.actionCounts || {}) },
-      careDates: Array.isArray(saved.careDates) ? [...new Set(saved.careDates.filter(isDateKey))].slice(-400) : [],
-      lastActionAt: Math.max(0, Number(saved.lastActionAt) || 0)
-    };
-  }
-
-  function normalizeNeed(value, fallback) {
+  function normalizeOptionalMinutes(value) {
+    if (value === "" || value === null || typeof value === "undefined") return null;
     const number = Number(value);
-    return Number.isFinite(number) ? clamp(number, 8, 100) : fallback;
+    return Number.isFinite(number) ? Math.max(0, Math.round(number)) : null;
   }
 
-  function isIsoDate(value) {
-    return typeof value === "string" && !Number.isNaN(new Date(value).getTime());
+  function loadPayrollSettings() {
+    const saved = safeJsonParse(localStorage.getItem(PAYROLL_STORAGE_KEY), {});
+    if (!saved || typeof saved !== "object" || Array.isArray(saved)) return {};
+    return Object.fromEntries(Object.entries(saved)
+      .filter(([monthKey]) => /^\d{4}-\d{2}$/.test(monthKey))
+      .map(([monthKey, value]) => [monthKey, normalizePayrollSettings(monthKey, value)]));
+  }
+
+  function normalizePayrollSettings(monthKey, value = {}) {
+    const fallback = CapPayroll.defaultVariablePeriod(monthKey) || { start: `${monthKey}-01`, end: `${monthKey}-01` };
+    const variableStart = isDateKey(value.variableStart) ? value.variableStart : fallback.start;
+    const variableEnd = isDateKey(value.variableEnd) && value.variableEnd >= variableStart ? value.variableEnd : fallback.end;
+    return {
+      variableStart,
+      variableEnd,
+      otherOrdinary: Math.max(0, Number(value.otherOrdinary) || 0),
+      recall: Math.max(0, Number(value.recall) || 0),
+      officialHs25Minutes: normalizeOptionalMinutes(value.officialHs25Minutes),
+      officialHs50Minutes: normalizeOptionalMinutes(value.officialHs50Minutes),
+      withholdingRate: clamp(Number(value.withholdingRate) || 0, 0, 1)
+    };
   }
 
   function saveSettings() { localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(state.settings)); }
   function saveMilestones() { localStorage.setItem(MILESTONE_STORAGE_KEY, JSON.stringify(state.milestones)); }
   function saveShifts() { localStorage.setItem(SHIFT_STORAGE_KEY, JSON.stringify(state.shifts)); }
-  function savePet() { localStorage.setItem(PET_STORAGE_KEY, JSON.stringify(state.pet)); }
+  function savePayrollSettings() { localStorage.setItem(PAYROLL_STORAGE_KEY, JSON.stringify(state.payrollSettings)); }
 
   function isDateKey(value) {
     if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -199,7 +186,10 @@
     const key = typeof date === "string" ? date : toDateKey(date);
     const override = state.shifts[key];
     if (override) return { ...override, custom: true };
-    return { worked: isBaseWorkDay(parseDateKey(key)), start: "", end: "", attraction: "", provisional: false, note: "", custom: false };
+    return {
+      worked: isBaseWorkDay(parseDateKey(key)), start: "", end: "", actualStart: "", actualEnd: "",
+      breakMinutes: null, nightBreakMinutes: 0, attraction: "", provisional: false, note: "", custom: false
+    };
   }
 
   function isPlannedWorkDay(date) { return getDayPlan(date).worked; }
@@ -217,11 +207,6 @@
     return duration;
   }
 
-  function shiftEndTimelineMinutes(record) {
-    const end = timeToMinutes(record.plan.end);
-    return record.plan.end <= record.plan.start ? end + 1440 : end;
-  }
-
   function formatDuration(minutes) {
     if (!minutes) return "--";
     const hours = Math.floor(minutes / 60);
@@ -232,6 +217,8 @@
   function formatHours(minutes) {
     return minutes ? formatDuration(minutes) : "0 h";
   }
+
+  function formatMoney(value) { return euro.format(Number(value) || 0); }
 
   function getShiftRoles(plan) {
     if (!plan || !plan.worked) return [];
@@ -254,12 +241,15 @@
     const plan = getDayPlan(date);
     const minutes = shiftDurationMinutes(plan);
     const roles = getShiftRoles(plan);
+    const dateKey = toDateKey(date);
+    const payroll = CapPayroll.buildPayrollDay({ dateKey, plan });
     return {
       date: new Date(date),
-      dateKey: toDateKey(date),
+      dateKey,
       monthKey: getMonthKey(date),
       plan,
       minutes,
+      payroll,
       roles,
       timed: minutes > 0,
       complete: Boolean(plan.worked && minutes > 0 && plan.attraction)
@@ -273,25 +263,20 @@
     return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
   }
 
-  function applyPetDecay(now = new Date()) {
-    const pet = state.pet;
-    const last = new Date(pet.lastUpdate);
-    const hours = clamp((now.getTime() - last.getTime()) / HOUR_MS, 0, 720);
-    if (hours <= 0) return;
-    pet.food = clamp(pet.food - hours * 1.65, 8, 100);
-    pet.energy = clamp(pet.energy - hours * 1.05, 8, 100);
-    pet.mood = clamp(pet.mood - hours * 0.72, 8, 100);
-    pet.clean = clamp(pet.clean - hours * 0.58, 8, 100);
-    pet.lastUpdate = now.toISOString();
-  }
-
-  function getPetStreak() {
-    const dates = new Set(state.pet.careDates);
-    let streak = 0;
-    let cursor = parseDateKey(toDateKey(new Date()));
-    if (!dates.has(toDateKey(cursor))) cursor = addDays(cursor, -1);
-    while (dates.has(toDateKey(cursor))) { streak += 1; cursor = addDays(cursor, -1); }
-    return streak;
+  function getLongestWorkStreak(workDays) {
+    if (!workDays.length) return { count: 0, start: null, end: null };
+    const sorted = [...workDays].sort((a, b) => a - b);
+    let best = { count: 1, start: sorted[0], end: sorted[0] };
+    let current = { count: 1, start: sorted[0], end: sorted[0] };
+    for (let index = 1; index < sorted.length; index += 1) {
+      if (dayDifference(sorted[index - 1], sorted[index]) === 1) {
+        current = { ...current, count: current.count + 1, end: sorted[index] };
+      } else {
+        current = { count: 1, start: sorted[index], end: sorted[index] };
+      }
+      if (current.count > best.count) best = { ...current };
+    }
+    return best;
   }
 
   function getPlanningStats(workDays) {
@@ -306,10 +291,9 @@
     const provisional = records.filter((record) => record.plan.provisional).length;
     const open = timedRecords.filter((record) => record.roles.includes("OPEN")).length;
     const close = timedRecords.filter((record) => record.roles.includes("CLOSE")).length;
-    const overnight = timedRecords.filter((record) => record.plan.end <= record.plan.start).length;
     return {
       records, timedRecords, minutes, hours: minutes / 60, confirmedMinutes, provisionalMinutes,
-      complete, timed: timedRecords.length, provisional, hsm, stt, open, close, overnight,
+      complete, timed: timedRecords.length, provisional, hsm, stt, open, close,
       fill: workDays.length ? complete / workDays.length * 100 : 100
     };
   }
@@ -337,7 +321,7 @@
     const nextWork = workDays.find((day) => day >= today) || null;
     const pastMilestones = state.milestones.filter((item) => parseDateKey(item.date) < today).length;
     const planning = getPlanningStats(workDays);
-    const xp = passedCalendarDays * 10 + pastMilestones * 50 + Math.floor(planning.hours) * 2 + state.pet.xp;
+    const xp = passedCalendarDays * 10 + pastMilestones * 50 + Math.floor(planning.hours) * 2;
     const level = clamp(Math.floor(xp / 250) + 1, 1, 10);
     return {
       now, today, start, end, deadline, allDays, workDays, totalDays, passedCalendarDays,
@@ -517,6 +501,75 @@
         <b>${escapeHtml(formatDuration(record.minutes))}</b>
       </button>`;
     }).join("") : '<div class="empty-state">Aucun shift avec des horaires complets sur cette période.</div>';
+
+    renderPayroll(data);
+  }
+
+  function getPayrollMonthSettings(monthKey) {
+    if (!state.payrollSettings[monthKey]) state.payrollSettings[monthKey] = normalizePayrollSettings(monthKey);
+    return state.payrollSettings[monthKey];
+  }
+
+  function renderPayroll(data) {
+    const hasMonth = state.hoursPeriod !== "all";
+    $("payrollUnavailable").hidden = hasMonth;
+    $("payrollContent").hidden = !hasMonth;
+    setText("payrollMonthLabel", hasMonth ? capitalize(monthYear.format(parseDateKey(`${state.hoursPeriod}-01`))) : "—");
+    if (!hasMonth) return;
+
+    const settings = getPayrollMonthSettings(state.hoursPeriod);
+    $("payrollVariableStart").value = settings.variableStart;
+    $("payrollVariableEnd").value = settings.variableEnd;
+    $("payrollOtherOrdinary").value = settings.otherOrdinary || 0;
+    $("payrollRecall").value = settings.recall || 0;
+    $("payrollOfficialHs25").value = settings.officialHs25Minutes === null ? "" : settings.officialHs25Minutes;
+    $("payrollOfficialHs50").value = settings.officialHs50Minutes === null ? "" : settings.officialHs50Minutes;
+    $("payrollWithholdingRate").value = Number((settings.withholdingRate * 100).toFixed(2));
+
+    const estimate = CapPayroll.estimateMonthlyPay(data.allDays.map(getShiftRecord).map((record) => record.payroll), {
+      monthKey: state.hoursPeriod,
+      ...settings
+    });
+    if (!estimate) return;
+
+    setText("payrollNetPaidHero", formatMoney(estimate.netPaid));
+    setText("payrollPaidTime", formatHours(estimate.paidMinutes));
+    setText("payrollNightTime", formatHours(estimate.nightMinutes));
+    setText("payrollLongTime", formatHours(estimate.longMinutes));
+    setText("payrollWorkedDays", estimate.workedDays);
+    setText("payrollFixed", formatMoney(estimate.lines.fixed));
+    setText("payrollNight", formatMoney(estimate.lines.night));
+    setText("payrollDressing", formatMoney(estimate.lines.dressing));
+    setText("payrollLong", formatMoney(estimate.lines.longDay));
+    setText("payrollOther", formatMoney(estimate.lines.otherOrdinary));
+    setText("payrollRecallLine", formatMoney(estimate.lines.recall));
+    setText("payrollHs25", `${formatMoney(estimate.lines.hs25)} · ${formatHours(estimate.hs25Minutes)}`);
+    setText("payrollHs50", `${formatMoney(estimate.lines.hs50)} · ${formatHours(estimate.hs50Minutes)}`);
+    setText("payrollGross", formatMoney(estimate.grossTotal));
+    setText("payrollNetBeforeTax", formatMoney(estimate.netBeforeTax));
+    setText("payrollTax", formatMoney(estimate.tax));
+    setText("payrollNetPaid", formatMoney(estimate.netPaid));
+
+    const actualDays = estimate.days.filter((day) => day.source === "actual").length;
+    const plannedDays = estimate.days.filter((day) => day.source === "planned").length;
+    const overtimeMode = estimate.usesOfficialOvertime ? "HS officielles prioritaires" : "HS inférées du lundi au dimanche";
+    setText("payrollPeriodNote", `Variables du ${estimate.variableStart.split("-").reverse().join("/")} au ${estimate.variableEnd.split("-").reverse().join("/")} · ${actualDays} par badgeage · ${plannedDays} par planning · ${overtimeMode}.`);
+  }
+
+  function updatePayrollSettingsFromForm() {
+    if (state.hoursPeriod === "all") return;
+    const monthKey = state.hoursPeriod;
+    state.payrollSettings[monthKey] = normalizePayrollSettings(monthKey, {
+      variableStart: $("payrollVariableStart").value,
+      variableEnd: $("payrollVariableEnd").value,
+      otherOrdinary: $("payrollOtherOrdinary").value,
+      recall: $("payrollRecall").value,
+      officialHs25Minutes: $("payrollOfficialHs25").value,
+      officialHs50Minutes: $("payrollOfficialHs50").value,
+      withholdingRate: Number($("payrollWithholdingRate").value) / 100
+    });
+    savePayrollSettings();
+    renderPayroll(getContractData());
   }
 
   function renderCalendar(data) {
@@ -563,6 +616,28 @@
     }).join("");
   }
 
+  function renderGrids(data) {
+    setText("calendarGridTitle", `${data.passedCalendarDays} sur ${data.totalDays}`);
+    setText("calendarGridPercent", formatPercent(data.progress));
+    setText("workGridTitle", `${data.workDone} sur ${data.workDays.length}`);
+    setText("workGridPercent", formatPercent(data.workProgress));
+
+    $("calendarMatrix").innerHTML = data.allDays.map((day) => {
+      const plan = getDayPlan(day);
+      const status = day < data.today ? "done" : isSameDay(day, data.today) ? "today" : "future";
+      const details = [capitalize(longDate.format(day)), plan.worked ? "travaillé" : "repos", plan.start && plan.end ? `${plan.start}–${plan.end}` : ""].filter(Boolean).join(" · ");
+      return `<button class="sequence-unit ${status} ${plan.worked ? "work" : "off"} ${plan.provisional ? "provisional" : ""}" type="button" data-edit-day="${toDateKey(day)}" title="${escapeHtml(details)}" aria-label="Configurer ${escapeHtml(longDate.format(day))}">${day.getDate()}</button>`;
+    }).join("");
+
+    $("workMatrix").innerHTML = data.workDays.map((day) => {
+      const plan = getDayPlan(day);
+      const status = day < data.today ? "done" : isSameDay(day, data.today) ? "today" : "future";
+      const attractionClass = plan.attraction ? `attraction-${plan.attraction.toLowerCase()}` : "";
+      const details = [capitalize(longDate.format(day)), plan.start && plan.end ? `${plan.start}–${plan.end}` : "horaires libres", plan.attraction].filter(Boolean).join(" · ");
+      return `<button class="sequence-unit work-unit ${status} ${attractionClass} ${plan.provisional ? "provisional" : ""}" type="button" data-edit-day="${toDateKey(day)}" title="${escapeHtml(details)}" aria-label="Configurer ${escapeHtml(longDate.format(day))}">${day.getDate()}</button>`;
+    }).join("");
+  }
+
   function renderMilestones(data) {
     const milestones = sortMilestones(data.today);
     const upcoming = milestones.filter((item) => parseDateKey(item.date) >= data.today).length;
@@ -603,12 +678,6 @@
 
     for (let i = 1; i <= 10; i += 1) add(`M${i}`, i === 1 ? "Premier repère" : `${i} jalons posés`, `Créer ${i} ${plural(i, "jalon")}`, "Jalons", state.milestones.length >= i);
 
-    const careThresholds = [1, 5, 10, 20, 30, 50, 75, 100, 150, 250];
-    careThresholds.forEach((threshold, index) => add(`T${index + 1}`, index === 0 ? "Bonjour Tempo" : `${threshold} soins`, `Prendre soin de ${state.pet.name} ${threshold} fois`, "Compagnon", state.pet.totalActions >= threshold));
-
-    const streak = getPetStreak();
-    [1, 3, 7, 14, 30].forEach((threshold, index) => add(`R${index + 1}`, `${threshold} ${plural(threshold, "jour")} ensemble`, `S'occuper de ${state.pet.name} ${threshold} jours de suite`, "Compagnon", streak >= threshold));
-
     const planningChecks = [
       { title: "Premier shift", text: "Renseigner un shift complet", value: data.planning.complete >= 1 },
       { title: "Planning à 25 %", text: "Compléter un quart des shifts", value: data.planning.fill >= 25 },
@@ -620,7 +689,7 @@
     return achievements;
   }
 
-  function renderStats(data) {
+  function renderTrophies(data) {
     const levelStart = (data.level - 1) * 250;
     const levelProgress = data.level === 10 ? 100 : clamp((data.xp - levelStart) / 250 * 100, 0, 100);
     setText("levelMedal", data.level);
@@ -629,6 +698,18 @@
     setText("nextLevelLabel", data.level === 10 ? "Niveau maximum atteint" : `Prochain niveau dans ${Math.max(0, data.level * 250 - data.xp)} XP`);
     setText("xpPercent", formatPercent(levelProgress));
     $("xpRing").style.setProperty("--xp", `${levelProgress}%`);
+
+    const achievements = buildAchievements(data);
+    const unlocked = achievements.filter((item) => item.unlocked);
+    let visible = achievements;
+    if (state.trophyFilter === "unlocked") visible = unlocked;
+    if (state.trophyFilter === "next") visible = [...unlocked.slice(-6), ...achievements.filter((item) => !item.unlocked).slice(0, 12)];
+    setText("achievementTotalTitle", `${achievements.length} trophées`);
+    setText("achievementCount", `${unlocked.length}/${achievements.length}`);
+    $("achievementGrid").innerHTML = visible.length ? visible.map((item) => `<article class="achievement ${item.unlocked ? "" : "locked"}"><i>${item.code}</i><strong>${item.title}</strong><span>${item.text}</span><span class="achievement-category">${item.category}</span></article>`).join("") : '<div class="empty-state">Aucun trophée débloqué pour le moment.</div>';
+  }
+
+  function renderStats(data) {
     const records = data.planning.timedRecords;
     const durations = records.map((record) => record.minutes);
     const averageMinutes = records.length ? Math.round(data.planning.minutes / records.length) : 0;
@@ -698,130 +779,30 @@
 
     const longest = records.reduce((best, record) => !best || record.minutes > best.minutes ? record : best, null);
     const shortest = records.reduce((best, record) => !best || record.minutes < best.minutes ? record : best, null);
-    const earliest = records.reduce((best, record) => !best || record.plan.start < best.plan.start ? record : best, null);
-    const latest = records.reduce((best, record) => !best || shiftEndTimelineMinutes(record) > shiftEndTimelineMinutes(best) ? record : best, null);
     const busiestMonth = monthItems.reduce((best, item) => !best || item.value > best.value ? item : best, null);
     const busiestWeekday = weekdayItems.reduce((best, item) => !best || item.value > best.value ? item : best, null);
+    const longestStreak = getLongestWorkStreak(data.workDays);
     const recordItems = [
       { label: "Shift le plus long", value: longest ? formatDuration(longest.minutes) : "—", detail: longest ? capitalize(shortDate.format(longest.date)) : "Aucune donnée" },
       { label: "Shift le plus court", value: shortest ? formatDuration(shortest.minutes) : "—", detail: shortest ? capitalize(shortDate.format(shortest.date)) : "Aucune donnée" },
-      { label: "Début le plus tôt", value: earliest ? earliest.plan.start : "—", detail: earliest ? capitalize(shortDate.format(earliest.date)) : "Aucune donnée" },
-      { label: "Fin la plus tardive", value: latest ? latest.plan.end : "—", detail: latest ? capitalize(shortDate.format(latest.date)) : "Aucune donnée" },
+      { label: "Plus longue salve", value: `${longestStreak.count} ${plural(longestStreak.count, "jour")}`, detail: longestStreak.start ? `${shortDate.format(longestStreak.start)} → ${shortDate.format(longestStreak.end)}` : "Aucune donnée" },
       { label: "Mois le plus chargé", value: busiestMonth && busiestMonth.value ? formatHours(busiestMonth.value) : "—", detail: busiestMonth && busiestMonth.value ? busiestMonth.label : "Aucune donnée" },
       { label: "Jour le plus chargé", value: busiestWeekday && busiestWeekday.value ? formatHours(busiestWeekday.value) : "—", detail: busiestWeekday && busiestWeekday.value ? busiestWeekday.label : "Aucune donnée" },
-      { label: "Shifts de nuit", value: data.planning.overnight, detail: "fin après minuit" },
       { label: "Moyenne par semaine", value: formatHours(Math.round(data.planning.minutes / Math.max(1, data.totalWeeks))), detail: `${data.totalWeeks} ${plural(data.totalWeeks, "semaine")}` }
     ];
     $("statsRecords").innerHTML = recordItems.map((item) => `<article><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong><small>${escapeHtml(item.detail)}</small></article>`).join("");
-
-    const achievements = buildAchievements(data);
-    const unlocked = achievements.filter((item) => item.unlocked);
-    let visible = achievements;
-    if (state.trophyFilter === "unlocked") visible = unlocked;
-    if (state.trophyFilter === "next") visible = [...unlocked.slice(-6), ...achievements.filter((item) => !item.unlocked).slice(0, 12)];
-    setText("achievementCount", `${unlocked.length}/${achievements.length}`);
-    $("achievementGrid").innerHTML = visible.length ? visible.map((item) => `<article class="achievement ${item.unlocked ? "" : "locked"}"><i>${item.code}</i><strong>${item.title}</strong><span>${item.text}</span><span class="achievement-category">${item.category}</span></article>`).join("") : '<div class="empty-state">Aucun trophée débloqué pour le moment.</div>';
-  }
-
-  function renderPet() {
-    applyPetDecay();
-    const pet = state.pet;
-    const average = (pet.food + pet.energy + pet.mood + pet.clean) / 4;
-    const age = Math.max(1, Math.floor((Date.now() - new Date(pet.bornAt).getTime()) / DAY_MS) + 1);
-    const level = Math.floor(pet.xp / 100) + 1;
-    const streak = getPetStreak();
-    const hour = new Date().getHours();
-    const previousVisit = new Date(state.previousPetVisit);
-    const visitMinutes = Math.max(0, Math.floor((Date.now() - previousVisit.getTime()) / 60000));
-    setText("gameTitle", pet.name);
-    setText("petAge", `Jour ${age}`);
-    setText("petLevel", level);
-    setText("petStreak", `${streak} j`);
-    setText("petXp", `${pet.xp} XP`);
-    setText("petActionsCount", pet.totalActions);
-    setText("petLastVisit", visitMinutes < 1 ? "maintenant" : visitMinutes < 60 ? `il y a ${visitMinutes} min` : `il y a ${Math.floor(visitMinutes / 60)} h`);
-    setPetNeed("Food", pet.food);
-    setPetNeed("Energy", pet.energy);
-    setPetNeed("Mood", pet.mood);
-    setPetNeed("Clean", pet.clean);
-    $("petWorld").classList.toggle("night", hour < 7 || hour >= 20);
-    $("petAvatar").classList.toggle("tired", pet.energy < 32);
-    $("petAvatar").classList.toggle("sad", pet.mood < 35 || pet.food < 28);
-    $("petAvatar").classList.toggle("dirty", pet.clean < 35);
-    $("petAvatar").setAttribute("aria-label", `${pet.name} est ${average >= 70 ? "en pleine forme" : average >= 40 ? "un peu fatigué" : "en demande d'attention"}`);
-    const status = getPetStatus(average);
-    setText("petStatusTitle", status.title);
-    setText("petStatusText", status.text);
-    setText("petSpeech", state.petMessage || getPetSpeech(pet, average));
-    savePet();
-  }
-
-  function setPetNeed(name, value) {
-    const rounded = Math.round(value);
-    setText(`pet${name}`, `${rounded} %`);
-    const bar = $(`pet${name}Bar`);
-    bar.style.width = `${rounded}%`;
-    bar.classList.toggle("low", rounded < 30);
-  }
-
-  function getPetStatus(average) {
-    if (average >= 80) return { title: "En pleine forme", text: `${state.pet.name} rayonne et gagne de l'expérience à chaque soin.` };
-    if (average >= 55) return { title: "Tout va bien", text: `${state.pet.name} avance tranquillement à tes côtés.` };
-    if (average >= 35) return { title: "Un peu d'attention", text: `Un petit soin ferait beaucoup de bien à ${state.pet.name}.` };
-    return { title: "Besoin de toi", text: `${state.pet.name} ne peut pas mourir, mais il aimerait vraiment te revoir.` };
-  }
-
-  function getPetSpeech(pet, average) {
-    if (pet.food < 30) return "J'ai un petit creux...";
-    if (pet.energy < 30) return "Une sieste et je repars.";
-    if (pet.clean < 30) return "Je crois que j'ai besoin d'un bain.";
-    if (pet.mood < 30) return "On joue un peu ensemble ?";
-    if (average > 82) return "On garde le cap ensemble !";
-    return "Content de te revoir.";
-  }
-
-  function performPetAction(actionName) {
-    const action = PET_ACTIONS[actionName];
-    if (!action) return;
-    const now = Date.now();
-    if (now - state.pet.lastActionAt < 1800) {
-      showToast("Laisse-lui juste une petite seconde");
-      return;
-    }
-    applyPetDecay(new Date(now));
-    ["food", "energy", "mood", "clean"].forEach((need) => {
-      if (typeof action[need] === "number") state.pet[need] = clamp(state.pet[need] + action[need], 8, 100);
-    });
-    state.pet.xp += action.xp;
-    state.pet.totalActions += 1;
-    state.pet.actionCounts[actionName] = Math.max(0, Number(state.pet.actionCounts[actionName]) || 0) + 1;
-    state.pet.lastActionAt = now;
-    const todayKey = toDateKey(new Date());
-    if (!state.pet.careDates.includes(todayKey)) state.pet.careDates.push(todayKey);
-    state.pet.careDates = state.pet.careDates.slice(-400);
-    state.petMessage = action.message;
-    clearTimeout(state.petMessageTimer);
-    state.petMessageTimer = setTimeout(() => { state.petMessage = ""; renderPet(); }, 3200);
-    savePet();
-    const avatar = $("petAvatar");
-    avatar.classList.remove("celebrate");
-    void avatar.offsetWidth;
-    avatar.classList.add("celebrate");
-    if (navigator.vibrate) navigator.vibrate([18, 35, 18]);
-    renderPet();
-    renderStats(getContractData());
   }
 
   function renderAll() {
-    applyPetDecay();
     const data = getContractData();
     renderHome(data);
     renderPlanning(data);
     renderHours(data);
     renderCalendar(data);
+    renderGrids(data);
     renderMilestones(data);
     renderStats(data);
-    renderPet();
+    renderTrophies(data);
     updateFormBounds();
   }
 
@@ -834,8 +815,9 @@
     const data = getContractData();
     if (view === "planning") renderPlanning(data);
     if (view === "hours") renderHours(data);
+    if (view === "grids") renderGrids(data);
     if (view === "stats") renderStats(data);
-    if (view === "game") renderPet();
+    if (view === "trophies") renderTrophies(data);
   }
 
   function createFormOptions() {
@@ -890,6 +872,10 @@
     $("dayProvisional").checked = Boolean(plan.provisional);
     $("shiftStart").value = plan.start;
     $("shiftEnd").value = plan.end;
+    $("actualStart").value = plan.actualStart;
+    $("actualEnd").value = plan.actualEnd;
+    $("breakMinutes").value = plan.breakMinutes === null ? "" : plan.breakMinutes;
+    $("nightBreakMinutes").value = plan.nightBreakMinutes || 0;
     $("shiftNote").value = plan.note;
     const attraction = document.querySelector(`input[name="attraction"][value="${plan.attraction}"]`);
     if (attraction) attraction.checked = true;
@@ -900,10 +886,12 @@
   function updateDayFormState() {
     const worked = $("dayWorked").checked;
     if (!worked) $("dayProvisional").checked = false;
-    [$("shiftStart"), $("shiftEnd"), $("shiftNote")].forEach((input) => { input.disabled = !worked; });
+    [$("shiftStart"), $("shiftEnd"), $("actualStart"), $("actualEnd"), $("breakMinutes"), $("nightBreakMinutes"), $("shiftNote")].forEach((input) => { input.disabled = !worked; });
     $("dayProvisional").disabled = !worked;
     document.querySelectorAll('input[name="attraction"]').forEach((input) => { input.disabled = !worked; });
     $("dayForm").querySelector(".shift-time-fields").classList.toggle("disabled", !worked);
+    $("dayForm").querySelector(".badge-field").classList.toggle("disabled", !worked);
+    $("dayForm").querySelector(".break-field").classList.toggle("disabled", !worked);
     $("dayForm").querySelector(".attraction-field").classList.toggle("disabled", !worked);
     $("dayForm").querySelector(".provisional-toggle").classList.toggle("disabled", !worked);
     $("shiftNote").closest(".field").classList.toggle("disabled", !worked);
@@ -911,8 +899,18 @@
   }
 
   function updateShiftDuration() {
-    const plan = { worked: $("dayWorked").checked, start: $("shiftStart").value, end: $("shiftEnd").value };
+    const plan = {
+      worked: $("dayWorked").checked,
+      start: $("shiftStart").value,
+      end: $("shiftEnd").value,
+      actualStart: $("actualStart").value,
+      actualEnd: $("actualEnd").value,
+      breakMinutes: normalizeOptionalMinutes($("breakMinutes").value),
+      nightBreakMinutes: normalizeOptionalMinutes($("nightBreakMinutes").value) || 0
+    };
     setText("shiftDuration", formatDuration(shiftDurationMinutes(plan)));
+    const payroll = CapPayroll.buildPayrollDay({ dateKey: $("dayEditDate").value, plan });
+    setText("shiftPaidDuration", payroll.paidMinutes ? `${formatDuration(payroll.paidMinutes)} · pause ${payroll.breakMinutes} min · ${payroll.source === "actual" ? "badgeage" : "± 5 min"}` : "--");
     const roles = getShiftRoles(plan);
     const status = $("shiftAutoStatus");
     status.textContent = roles.length ? roles.join(" + ") : "STANDARD";
@@ -922,7 +920,6 @@
 
   function openSettings() {
     $("contractNameInput").value = state.settings.name;
-    $("petNameInput").value = state.pet.name;
     $("contractStartInput").value = state.settings.start;
     $("contractEndInput").value = state.settings.end;
     document.querySelectorAll('input[name="restDay"]').forEach((input) => { input.checked = state.settings.restDays.includes(Number(input.value)); });
@@ -952,9 +949,9 @@
 
   function getBackupPayload() {
     return {
-      app: "cap-contrat", version: 3, savedAt: new Date().toISOString(), settings: state.settings,
+      app: "cap-contrat", version: 4, savedAt: new Date().toISOString(), settings: state.settings,
       contract: { start: state.settings.start, end: state.settings.end, restDays: state.settings.restDays },
-      milestones: state.milestones, pet: state.pet
+      milestones: state.milestones, payrollSettings: state.payrollSettings
     };
   }
 
@@ -965,7 +962,7 @@
 
   function exportShifts() {
     const payload = {
-      app: "cap-contrat-shifts", version: 2, savedAt: new Date().toISOString(),
+      app: "cap-contrat-shifts", version: 3, savedAt: new Date().toISOString(),
       contract: { start: state.settings.start, end: state.settings.end }, shifts: state.shifts
     };
     downloadJson(payload, `cap-contrat-shifts-${toDateKey(new Date())}.json`);
@@ -982,10 +979,11 @@
       if (!Array.isArray(parsed)) {
         const settingsSource = parsed.settings || (parsed.contract ? { ...parsed.contract, name: state.settings.name } : null);
         if (settingsSource) { state.settings = normalizeSettings({ ...state.settings, ...settingsSource }); saveSettings(); }
-        if (parsed.pet && typeof parsed.pet === "object") {
-          localStorage.setItem(PET_STORAGE_KEY, JSON.stringify(parsed.pet));
-          const importedPet = loadPet();
-          Object.assign(state.pet, importedPet);
+        if (parsed.payrollSettings && typeof parsed.payrollSettings === "object") {
+          state.payrollSettings = Object.fromEntries(Object.entries(parsed.payrollSettings)
+            .filter(([monthKey]) => /^\d{4}-\d{2}$/.test(monthKey))
+            .map(([monthKey, value]) => [monthKey, normalizePayrollSettings(monthKey, value)]));
+          savePayrollSettings();
         }
       }
       renderAll();
@@ -1027,6 +1025,8 @@
       renderCalendar(getContractData());
     });
     $("calendarList").addEventListener("click", (event) => { const button = event.target.closest("[data-edit-day]"); if (button) openDayEditor(button.dataset.editDay); });
+    $("calendarMatrix").addEventListener("click", (event) => { const button = event.target.closest("[data-edit-day]"); if (button) openDayEditor(button.dataset.editDay); });
+    $("workMatrix").addEventListener("click", (event) => { const button = event.target.closest("[data-edit-day]"); if (button) openDayEditor(button.dataset.editDay); });
 
     $("planningFilter").addEventListener("click", (event) => {
       const button = event.target.closest("[data-planning-filter]");
@@ -1038,6 +1038,8 @@
     $("planningList").addEventListener("click", (event) => { const button = event.target.closest("[data-edit-day]"); if (button) openDayEditor(button.dataset.editDay); });
     $("hoursPeriod").addEventListener("change", (event) => { state.hoursPeriod = event.target.value; renderHours(getContractData()); });
     $("hoursBreakdown").addEventListener("click", (event) => { const button = event.target.closest("[data-edit-day]"); if (button) openDayEditor(button.dataset.editDay); });
+    ["payrollVariableStart", "payrollVariableEnd", "payrollOtherOrdinary", "payrollRecall", "payrollOfficialHs25", "payrollOfficialHs50", "payrollWithholdingRate"]
+      .forEach((id) => $(id).addEventListener("change", updatePayrollSettingsFromForm));
 
     $("jumpCurrentMonth").addEventListener("click", () => {
       const data = getContractData();
@@ -1067,8 +1069,8 @@
     });
 
     $("dayWorked").addEventListener("change", updateDayFormState);
-    $("shiftStart").addEventListener("input", updateShiftDuration);
-    $("shiftEnd").addEventListener("input", updateShiftDuration);
+    ["shiftStart", "shiftEnd", "actualStart", "actualEnd", "breakMinutes", "nightBreakMinutes"]
+      .forEach((id) => $(id).addEventListener("input", updateShiftDuration));
     $("dayForm").addEventListener("submit", (event) => {
       event.preventDefault();
       const date = $("dayEditDate").value;
@@ -1078,6 +1080,10 @@
         worked: $("dayWorked").checked,
         start: isTime($("shiftStart").value) ? $("shiftStart").value : "",
         end: isTime($("shiftEnd").value) ? $("shiftEnd").value : "",
+        actualStart: isTime($("actualStart").value) ? $("actualStart").value : "",
+        actualEnd: isTime($("actualEnd").value) ? $("actualEnd").value : "",
+        breakMinutes: normalizeOptionalMinutes($("breakMinutes").value),
+        nightBreakMinutes: normalizeOptionalMinutes($("nightBreakMinutes").value) || 0,
         attraction: attraction && (attraction.value === "HSM" || attraction.value === "STT") ? attraction.value : "",
         provisional: $("dayWorked").checked && $("dayProvisional").checked,
         note: $("shiftNote").value.trim().slice(0, 100)
@@ -1096,10 +1102,8 @@
       if (!button) return;
       state.trophyFilter = button.dataset.trophyFilter;
       document.querySelectorAll("#trophyFilter button").forEach((item) => item.classList.toggle("active", item === button));
-      renderStats(getContractData());
+      renderTrophies(getContractData());
     });
-
-    document.querySelectorAll("[data-pet-action]").forEach((button) => button.addEventListener("click", () => performPetAction(button.dataset.petAction)));
 
     $("settingsForm").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -1109,8 +1113,7 @@
       if (!isDateKey(start) || !isDateKey(end) || end < start) { showToast("La date de fin doit suivre la date de début"); return; }
       if (restDays.length === 7) { showToast("Il faut conserver au moins un jour travaillé"); return; }
       state.settings = normalizeSettings({ name: $("contractNameInput").value, start, end, restDays });
-      state.pet.name = $("petNameInput").value.trim().slice(0, 16) || "Tempo";
-      saveSettings(); savePet(); closeSheets(); renderAll(); showToast("Réglages enregistrés");
+      saveSettings(); closeSheets(); renderAll(); showToast("Réglages enregistrés");
     });
 
     $("exportBackup").addEventListener("click", exportBackup);
@@ -1123,12 +1126,8 @@
 
   createFormOptions();
   bindEvents();
-  applyPetDecay();
-  state.pet.lastVisit = new Date().toISOString();
-  savePet();
   renderAll();
   setInterval(() => {
     if (state.activeView === "home") renderHome(getContractData());
-    if (state.activeView === "game") renderPet();
   }, 1000);
 }());
