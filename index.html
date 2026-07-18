@@ -73,6 +73,58 @@
         </section>
       </section>
 
+      <section class="view" id="view-planning" aria-labelledby="planningTitle">
+        <div class="view-title planning-view-title">
+          <div><p class="kicker">Vue opérationnelle</p><h1 id="planningTitle">Planning</h1></div>
+          <div class="view-actions">
+            <button class="text-button" type="button" data-go="calendar">Calendrier</button>
+            <button class="text-button" type="button" data-go="milestones">Jalons</button>
+          </div>
+        </div>
+        <div class="planning-summary" aria-label="Résumé du planning">
+          <article><strong id="planningDayCount">0</strong><span>jours travaillés</span></article>
+          <article><strong id="planningTimedCount">0</strong><span>horaires saisis</span></article>
+          <article><strong id="planningProvisionalCount">0</strong><span>prévisionnels</span></article>
+          <article><strong id="planningHoursTotal">0 h</strong><span>au total</span></article>
+        </div>
+        <div class="segmented-control" id="planningFilter" aria-label="Filtrer le planning">
+          <button class="active" type="button" data-planning-filter="all">Tout</button>
+          <button type="button" data-planning-filter="work">Travail</button>
+          <button type="button" data-planning-filter="provisional">Prévisionnel</button>
+        </div>
+        <div class="planning-legend" aria-label="Légende du planning">
+          <span><i class="legend-open"></i>OPEN</span>
+          <span><i class="legend-close"></i>CLOSE</span>
+          <span><i class="legend-provisional"></i>Prévisionnel</span>
+        </div>
+        <div class="planning-list" id="planningList"></div>
+      </section>
+
+      <section class="view" id="view-hours" aria-labelledby="hoursTitle">
+        <div class="view-title hours-view-title">
+          <div><p class="kicker">Temps de travail</p><h1 id="hoursTitle">Heures</h1></div>
+          <label class="period-select"><span>Période</span><select id="hoursPeriod" aria-label="Choisir la période"></select></label>
+        </div>
+        <section class="hours-hero">
+          <span id="hoursPeriodLabel">Tout le contrat</span>
+          <strong id="hoursGrandTotal">0 h</strong>
+          <small id="hoursShiftCount">0 shift renseigné</small>
+        </section>
+        <div class="hours-summary" aria-label="Répartition des heures">
+          <article><span>Confirmées</span><strong id="hoursConfirmed">0 h</strong></article>
+          <article><span>Prévisionnelles</span><strong id="hoursProvisional">0 h</strong></article>
+          <article><span>Moyenne / shift</span><strong id="hoursAverage">0 h</strong></article>
+        </div>
+        <section class="stats-block compact-block">
+          <div class="section-heading"><div><span class="section-caption">Répartition</span><h2>Par attraction</h2></div></div>
+          <div class="stats-bars" id="hoursAttractionBars"></div>
+        </section>
+        <section class="hours-detail">
+          <div class="section-heading"><div><span class="section-caption">Détail</span><h2>Shifts comptabilisés</h2></div><strong id="hoursDetailCount">0</strong></div>
+          <div class="hours-breakdown" id="hoursBreakdown"></div>
+        </section>
+      </section>
+
       <section class="view" id="view-calendar" aria-labelledby="calendarTitle">
         <div class="view-title">
           <div><p class="kicker">Trajectoire</p><h1 id="calendarTitle">Calendrier</h1></div>
@@ -105,39 +157,38 @@
       </section>
 
       <section class="view" id="view-stats" aria-labelledby="statsTitle">
-        <div class="view-title"><div><p class="kicker">Tableau de bord</p><h1 id="statsTitle">Rythme</h1></div></div>
-        <section class="level-banner">
-          <div class="level-medal" id="levelMedal">1</div>
-          <div><span id="levelName">Premier pas</span><h2 id="xpLabel">0 XP</h2><p id="nextLevelLabel">Prochain niveau dans 100 XP</p></div>
-          <div class="xp-ring" id="xpRing" aria-label="Progression du niveau"><span id="xpPercent">0 %</span></div>
+        <div class="view-title"><div><p class="kicker">Analyse du planning</p><h1 id="statsTitle">Stats</h1></div></div>
+        <div class="insight-grid" id="statsHighlights" aria-label="Indicateurs principaux"></div>
+
+        <section class="stats-block">
+          <div class="section-heading"><div><span class="section-caption">Qualité du planning</span><h2>Couverture</h2></div><strong id="statsCompletionRate">0 %</strong></div>
+          <div class="quality-meter"><i id="statsCompletionBar"></i></div>
+          <div class="quality-grid" id="statsQualityGrid"></div>
         </section>
 
         <section class="stats-block">
-          <div class="section-heading"><div><span class="section-caption">Jours travaillés</span><h2 id="workStatsTitle">0 sur 0</h2></div><strong id="workPercent">0 %</strong></div>
-          <div class="shift-summary" aria-label="Résumé du planning">
-            <div><strong id="scheduledHours">0 h</strong><span>planifiées</span></div>
-            <div><strong id="hsmCount">0</strong><span>HSM</span></div>
-            <div><strong id="sttCount">0</strong><span>STT</span></div>
-            <div><strong id="planningFill">0 %</strong><span>renseigné</span></div>
-          </div>
-          <div class="work-matrix" id="workMatrix" aria-label="Grille des jours travaillés"></div>
-          <div class="calendar-legend"><span><i class="legend-done"></i>Fait</span><span><i class="legend-today"></i>Aujourd'hui</span><span><i class="legend-hsm"></i>HSM</span><span><i class="legend-stt"></i>STT</span></div>
-          <p class="planning-hint">Chaque ligne de 10 cases représente une quinzaine de travail. Touche une journée pour compléter son shift.</p>
+          <div class="section-heading"><div><span class="section-caption">Affectations</span><h2>Attractions</h2></div></div>
+          <div class="stats-bars" id="statsAttractionBars"></div>
         </section>
 
         <section class="stats-block">
-          <div class="section-heading"><div><span class="section-caption">Découpage</span><h2>Semaines</h2></div><strong id="weekCountLabel">0</strong></div>
-          <div class="week-list" id="weekList"></div>
+          <div class="section-heading"><div><span class="section-caption">Prise de service</span><h2>OPEN / CLOSE</h2></div></div>
+          <div class="stats-bars" id="statsRoleBars"></div>
         </section>
 
-        <section class="stats-block achievements-block">
-          <div class="section-heading"><div><span class="section-caption">Collection</span><h2>100 trophées</h2></div><strong id="achievementCount">0/100</strong></div>
-          <div class="segmented-control trophy-filter" id="trophyFilter" aria-label="Filtrer les trophées">
-            <button class="active" type="button" data-trophy-filter="next">À suivre</button>
-            <button type="button" data-trophy-filter="unlocked">Débloqués</button>
-            <button type="button" data-trophy-filter="all">Tous</button>
-          </div>
-          <div class="achievement-grid" id="achievementGrid"></div>
+        <section class="stats-block">
+          <div class="section-heading"><div><span class="section-caption">Saisonnalité</span><h2>Heures par mois</h2></div></div>
+          <div class="stats-bars month-bars" id="statsMonthBars"></div>
+        </section>
+
+        <section class="stats-block">
+          <div class="section-heading"><div><span class="section-caption">Rythme hebdomadaire</span><h2>Jours de la semaine</h2></div></div>
+          <div class="stats-bars weekday-bars" id="statsWeekdayBars"></div>
+        </section>
+
+        <section class="stats-block">
+          <div class="section-heading"><div><span class="section-caption">Records</span><h2>Extrêmes du planning</h2></div></div>
+          <div class="record-grid" id="statsRecords"></div>
         </section>
       </section>
 
@@ -181,14 +232,30 @@
           <p id="petStatusText">Tempo découvre sa nouvelle maison.</p>
           <div class="pet-meta"><span><b id="petActionsCount">0</b> soins réalisés</span><span>Dernière visite : <b id="petLastVisit">maintenant</b></span></div>
         </section>
+
+        <section class="level-banner game-level-banner">
+          <div class="level-medal" id="levelMedal">1</div>
+          <div><span id="levelName">Premier pas</span><h2 id="xpLabel">0 XP</h2><p id="nextLevelLabel">Prochain niveau dans 100 XP</p></div>
+          <div class="xp-ring" id="xpRing" aria-label="Progression du niveau"><span id="xpPercent">0 %</span></div>
+        </section>
+
+        <section class="stats-block achievements-block">
+          <div class="section-heading"><div><span class="section-caption">Collection</span><h2>100 trophées</h2></div><strong id="achievementCount">0/100</strong></div>
+          <div class="segmented-control trophy-filter" id="trophyFilter" aria-label="Filtrer les trophées">
+            <button class="active" type="button" data-trophy-filter="next">À suivre</button>
+            <button type="button" data-trophy-filter="unlocked">Débloqués</button>
+            <button type="button" data-trophy-filter="all">Tous</button>
+          </div>
+          <div class="achievement-grid" id="achievementGrid"></div>
+        </section>
       </section>
     </main>
 
     <nav class="bottom-nav" aria-label="Navigation principale">
       <button class="active" type="button" data-view="home" aria-label="Accueil"><span class="nav-icon">⌂</span><small>Accueil</small></button>
-      <button type="button" data-view="calendar" aria-label="Calendrier"><span class="nav-icon">▦</span><small>Calendrier</small></button>
-      <button type="button" data-view="milestones" aria-label="Jalons"><span class="nav-icon">◆</span><small>Jalons</small></button>
-      <button type="button" data-view="stats" aria-label="Rythme"><span class="nav-icon">↗</span><small>Rythme</small></button>
+      <button type="button" data-view="planning" aria-label="Planning"><span class="nav-icon">▤</span><small>Planning</small></button>
+      <button type="button" data-view="hours" aria-label="Heures travaillées"><span class="nav-icon">◷</span><small>Heures</small></button>
+      <button type="button" data-view="stats" aria-label="Statistiques"><span class="nav-icon">↗</span><small>Stats</small></button>
       <button type="button" data-view="game" aria-label="Bonus"><span class="nav-icon">▶</span><small>Bonus</small></button>
     </nav>
   </div>
@@ -228,7 +295,7 @@
     <section class="backup-zone shift-backup-zone">
       <span class="section-caption">Planning quotidien</span>
       <h3>Fichier des shifts</h3>
-      <p>Ce fichier JSON contient uniquement les horaires, attractions, jours travaillés et notes. Il est séparé des jalons.</p>
+      <p>Ce fichier JSON contient les horaires, attractions, statuts prévisionnels, jours travaillés et notes. Il est séparé des jalons.</p>
       <div class="backup-actions"><button id="exportShifts" type="button">Exporter les shifts</button><button id="importShifts" type="button">Importer</button><input id="shiftBackupFile" type="file" accept="application/json,.json" hidden></div>
       <p class="backup-status" id="shiftBackupStatus" aria-live="polite"></p>
     </section>
@@ -240,10 +307,12 @@
     <form id="dayForm">
       <input id="dayEditDate" type="hidden">
       <label class="toggle-row"><span><strong>Journée travaillée</strong><small>La journée apparaîtra dans les quinzaines</small></span><input id="dayWorked" type="checkbox"><i></i></label>
+      <label class="toggle-row provisional-toggle"><span><strong>Horaire prévisionnel</strong><small>À activer uniquement si le shift peut encore changer</small></span><input id="dayProvisional" type="checkbox"><i></i></label>
       <div class="field-pair shift-time-fields"><label class="field"><span>Début du shift</span><input id="shiftStart" type="time"></label><label class="field"><span>Fin du shift</span><input id="shiftEnd" type="time"></label></div>
       <fieldset class="attraction-field"><legend>Attraction attitrée</legend><div><label><input type="radio" name="attraction" value="HSM"><span>HSM</span></label><label><input type="radio" name="attraction" value="STT"><span>STT</span></label><label><input type="radio" name="attraction" value=""><span>Aucune</span></label></div></fieldset>
       <label class="field"><span>Note de journée</span><input id="shiftNote" type="text" maxlength="100" placeholder="Équipe, événement, souvenir..."></label>
       <div class="shift-duration"><span>Durée calculée</span><strong id="shiftDuration">--</strong></div>
+      <div class="shift-auto-status"><span>Statut automatique</span><strong id="shiftAutoStatus">STANDARD</strong><small>OPEN à 06:35 ou 07:50 · CLOSE à 22:40 ou 23:25</small></div>
       <div class="sheet-actions"><button class="primary-button" type="submit">Enregistrer la journée</button><button class="danger-button" id="resetDay" type="button">Rétablir le planning par défaut</button></div>
     </form>
   </section>

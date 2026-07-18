@@ -8,6 +8,8 @@
   const SETTINGS_STORAGE_KEY = "contract-tracker-settings-v2";
   const PET_STORAGE_KEY = "contract-tracker-pet-v3";
   const LEGACY_GAME_STORAGE_KEY = "contract-tracker-game-v2";
+  const OPEN_STARTS = new Set(["06:35", "07:50"]);
+  const CLOSE_ENDS = new Set(["22:40", "23:25"]);
 
   const DEFAULT_SETTINGS = {
     name: "Cap Contrat",
@@ -38,11 +40,14 @@
   const longDate = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
   const shortDate = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long" });
   const monthOnly = new Intl.DateTimeFormat("fr-FR", { month: "long" });
+  const monthYear = new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric" });
 
   const loadedPet = loadPet();
   const state = {
     activeView: "home",
     calendarFilter: "all",
+    planningFilter: "all",
+    hoursPeriod: "all",
     trophyFilter: "next",
     settings: loadSettings(),
     milestones: loadMilestones(),
@@ -115,6 +120,7 @@
         start: isTime(value.start) ? value.start : "",
         end: isTime(value.end) ? value.end : "",
         attraction: value.attraction === "HSM" || value.attraction === "STT" ? value.attraction : "",
+        provisional: Boolean(value.provisional),
         note: typeof value.note === "string" ? value.note.trim().slice(0, 100) : ""
       };
     });
@@ -193,18 +199,27 @@
     const key = typeof date === "string" ? date : toDateKey(date);
     const override = state.shifts[key];
     if (override) return { ...override, custom: true };
-    return { worked: isBaseWorkDay(parseDateKey(key)), start: "", end: "", attraction: "", note: "", custom: false };
+    return { worked: isBaseWorkDay(parseDateKey(key)), start: "", end: "", attraction: "", provisional: false, note: "", custom: false };
   }
 
   function isPlannedWorkDay(date) { return getDayPlan(date).worked; }
 
+  function timeToMinutes(value) {
+    if (!isTime(value)) return 0;
+    const [hours, minutes] = value.split(":").map(Number);
+    return hours * 60 + minutes;
+  }
+
   function shiftDurationMinutes(plan) {
     if (!plan.worked || !isTime(plan.start) || !isTime(plan.end)) return 0;
-    const [startHour, startMinute] = plan.start.split(":").map(Number);
-    const [endHour, endMinute] = plan.end.split(":").map(Number);
-    let duration = endHour * 60 + endMinute - (startHour * 60 + startMinute);
+    let duration = timeToMinutes(plan.end) - timeToMinutes(plan.start);
     if (duration < 0) duration += 1440;
     return duration;
+  }
+
+  function shiftEndTimelineMinutes(record) {
+    const end = timeToMinutes(record.plan.end);
+    return record.plan.end <= record.plan.start ? end + 1440 : end;
   }
 
   function formatDuration(minutes) {
@@ -212,6 +227,50 @@
     const hours = Math.floor(minutes / 60);
     const rest = minutes % 60;
     return rest ? `${hours} h ${String(rest).padStart(2, "0")}` : `${hours} h`;
+  }
+
+  function formatHours(minutes) {
+    return minutes ? formatDuration(minutes) : "0 h";
+  }
+
+  function getShiftRoles(plan) {
+    if (!plan || !plan.worked) return [];
+    const roles = [];
+    if (OPEN_STARTS.has(plan.start)) roles.push("OPEN");
+    if (CLOSE_ENDS.has(plan.end)) roles.push("CLOSE");
+    return roles;
+  }
+
+  function getShiftRoleLabel(plan) {
+    const roles = getShiftRoles(plan);
+    return roles.length ? roles.join(" + ") : "STANDARD";
+  }
+
+  function getMonthKey(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  }
+
+  function getShiftRecord(date) {
+    const plan = getDayPlan(date);
+    const minutes = shiftDurationMinutes(plan);
+    const roles = getShiftRoles(plan);
+    return {
+      date: new Date(date),
+      dateKey: toDateKey(date),
+      monthKey: getMonthKey(date),
+      plan,
+      minutes,
+      roles,
+      timed: minutes > 0,
+      complete: Boolean(plan.worked && minutes > 0 && plan.attraction)
+    };
+  }
+
+  function median(values) {
+    if (!values.length) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
   }
 
   function applyPetDecay(now = new Date()) {
@@ -236,18 +295,23 @@
   }
 
   function getPlanningStats(workDays) {
-    let minutes = 0;
-    let complete = 0;
-    let hsm = 0;
-    let stt = 0;
-    workDays.forEach((day) => {
-      const plan = getDayPlan(day);
-      minutes += shiftDurationMinutes(plan);
-      if (plan.start && plan.end && plan.attraction) complete += 1;
-      if (plan.attraction === "HSM") hsm += 1;
-      if (plan.attraction === "STT") stt += 1;
-    });
-    return { minutes, hours: minutes / 60, complete, fill: workDays.length ? complete / workDays.length * 100 : 100, hsm, stt };
+    const records = workDays.map(getShiftRecord);
+    const timedRecords = records.filter((record) => record.timed);
+    const minutes = timedRecords.reduce((sum, record) => sum + record.minutes, 0);
+    const confirmedMinutes = timedRecords.filter((record) => !record.plan.provisional).reduce((sum, record) => sum + record.minutes, 0);
+    const provisionalMinutes = timedRecords.filter((record) => record.plan.provisional).reduce((sum, record) => sum + record.minutes, 0);
+    const complete = records.filter((record) => record.complete).length;
+    const hsm = records.filter((record) => record.plan.attraction === "HSM").length;
+    const stt = records.filter((record) => record.plan.attraction === "STT").length;
+    const provisional = records.filter((record) => record.plan.provisional).length;
+    const open = timedRecords.filter((record) => record.roles.includes("OPEN")).length;
+    const close = timedRecords.filter((record) => record.roles.includes("CLOSE")).length;
+    const overnight = timedRecords.filter((record) => record.plan.end <= record.plan.start).length;
+    return {
+      records, timedRecords, minutes, hours: minutes / 60, confirmedMinutes, provisionalMinutes,
+      complete, timed: timedRecords.length, provisional, hsm, stt, open, close, overnight,
+      fill: workDays.length ? complete / workDays.length * 100 : 100
+    };
   }
 
   function getContractData(now = new Date()) {
@@ -349,7 +413,7 @@
   function formatNextWork(date) {
     if (!date) return "Plus aucun service prévu";
     const plan = getDayPlan(date);
-    const details = [plan.start || "horaire libre", plan.attraction].filter(Boolean).join(" · ");
+    const details = [plan.provisional ? "prévisionnel" : "", plan.start || "horaire libre", plan.attraction, getShiftRoles(plan).join(" + ")].filter(Boolean).join(" · ");
     return `Prochain service : ${shortDate.format(date)}${details ? ` · ${details}` : ""}`;
   }
 
@@ -357,8 +421,102 @@
     if (data.today < data.start) return `Le départ est prévu dans ${dayDifference(data.today, data.start)} jours.`;
     if (data.today > data.end) return "La ligne d'arrivée est franchie. Mission accomplie.";
     if (!plan.worked) return "Aujourd'hui compte aussi : le temps progresse pendant le repos.";
-    const details = [plan.start && plan.end ? `${plan.start}–${plan.end}` : "horaires à compléter", plan.attraction].filter(Boolean).join(" · ");
+    const details = [plan.provisional ? "prévisionnel" : "", plan.start && plan.end ? `${plan.start}–${plan.end}` : "horaires à compléter", plan.attraction, getShiftRoles(plan).join(" + ")].filter(Boolean).join(" · ");
     return `Shift du jour : ${details}. Une journée de plus vers l'arrivée.`;
+  }
+
+  function renderBarRows(containerId, items, valueFormatter = (value) => String(value)) {
+    const container = $(containerId);
+    if (!container) return;
+    const visible = items.filter((item) => item.value > 0);
+    if (!visible.length) {
+      container.innerHTML = '<div class="empty-state compact-empty">Aucune donnée suffisante pour cette période.</div>';
+      return;
+    }
+    const maximum = Math.max(...visible.map((item) => item.value), 1);
+    container.innerHTML = visible.map((item) => `<div class="stat-bar-row ${item.tone || ""}">
+      <div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(valueFormatter(item.value))}</strong></div>
+      <div class="stat-bar-track"><i style="width:${item.value / maximum * 100}%"></i></div>
+      ${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ""}
+    </div>`).join("");
+  }
+
+  function renderPlanning(data) {
+    const planning = data.planning;
+    setText("planningDayCount", data.workDays.length);
+    setText("planningTimedCount", planning.timed);
+    setText("planningProvisionalCount", planning.provisional);
+    setText("planningHoursTotal", formatHours(planning.minutes));
+
+    let records = data.allDays.map(getShiftRecord);
+    if (state.planningFilter === "work") records = records.filter((record) => record.plan.worked);
+    if (state.planningFilter === "provisional") records = records.filter((record) => record.plan.worked && record.plan.provisional);
+    if (!records.length) {
+      $("planningList").innerHTML = '<div class="empty-state">Aucune journée ne correspond à ce filtre.</div>';
+      return;
+    }
+
+    const grouped = records.reduce((months, record) => {
+      if (!months[record.monthKey]) months[record.monthKey] = [];
+      months[record.monthKey].push(record);
+      return months;
+    }, {});
+
+    $("planningList").innerHTML = Object.entries(grouped).map(([monthKey, monthRecords]) => {
+      const rows = monthRecords.map((record) => {
+        const plan = record.plan;
+        const roleTags = record.roles.length
+          ? record.roles.map((role) => `<span class="shift-role ${role.toLowerCase()}">${role}</span>`).join("")
+          : plan.worked ? '<span class="shift-role standard">STANDARD</span>' : "";
+        const provisionalTag = plan.provisional ? '<span class="provisional-badge">Prévisionnel</span>' : "";
+        const timeLabel = record.timed ? `${plan.start}–${plan.end}` : plan.worked ? "Horaires à compléter" : "Journée de repos";
+        return `<button class="planning-row ${plan.worked ? "work" : "off"} ${plan.provisional ? "provisional" : ""}" type="button" data-edit-day="${record.dateKey}">
+          <span class="planning-date"><strong>${WEEKDAY_SHORT[record.date.getDay()]}</strong><b>${record.date.getDate()}</b></span>
+          <span class="planning-main"><strong>${escapeHtml(plan.worked ? (plan.attraction || "Sans attraction") : "Repos")}</strong><small>${escapeHtml(timeLabel)}</small>${provisionalTag}</span>
+          <span class="planning-role">${roleTags}</span>
+          <span class="planning-duration"><strong>${record.timed ? escapeHtml(formatDuration(record.minutes)) : "—"}</strong><small>amplitude</small></span>
+        </button>`;
+      }).join("");
+      return `<section class="planning-month"><div class="planning-month-title"><h2>${escapeHtml(capitalize(monthYear.format(parseDateKey(`${monthKey}-01`))))}</h2><span>${monthRecords.length} ${plural(monthRecords.length, "jour")}</span></div>${rows}</section>`;
+    }).join("");
+  }
+
+  function renderHours(data) {
+    const monthKeys = [...new Set(data.allDays.map(getMonthKey))];
+    if (state.hoursPeriod !== "all" && !monthKeys.includes(state.hoursPeriod)) state.hoursPeriod = "all";
+    $("hoursPeriod").innerHTML = [
+      '<option value="all">Tout le contrat</option>',
+      ...monthKeys.map((key) => `<option value="${key}">${escapeHtml(capitalize(monthYear.format(parseDateKey(`${key}-01`))))}</option>`)
+    ].join("");
+    $("hoursPeriod").value = state.hoursPeriod;
+
+    const records = data.planning.timedRecords.filter((record) => state.hoursPeriod === "all" || record.monthKey === state.hoursPeriod);
+    const minutes = records.reduce((sum, record) => sum + record.minutes, 0);
+    const confirmedMinutes = records.filter((record) => !record.plan.provisional).reduce((sum, record) => sum + record.minutes, 0);
+    const provisionalMinutes = records.filter((record) => record.plan.provisional).reduce((sum, record) => sum + record.minutes, 0);
+    const periodLabel = state.hoursPeriod === "all" ? "Tout le contrat" : capitalize(monthYear.format(parseDateKey(`${state.hoursPeriod}-01`)));
+    setText("hoursPeriodLabel", periodLabel);
+    setText("hoursGrandTotal", formatHours(minutes));
+    setText("hoursShiftCount", `${records.length} ${plural(records.length, "shift")} renseigné${records.length > 1 ? "s" : ""}`);
+    setText("hoursConfirmed", formatHours(confirmedMinutes));
+    setText("hoursProvisional", formatHours(provisionalMinutes));
+    setText("hoursAverage", records.length ? formatHours(Math.round(minutes / records.length)) : "0 h");
+    setText("hoursDetailCount", records.length);
+
+    renderBarRows("hoursAttractionBars", [
+      { label: "HSM", value: records.filter((record) => record.plan.attraction === "HSM").reduce((sum, record) => sum + record.minutes, 0), tone: "cyan" },
+      { label: "STT", value: records.filter((record) => record.plan.attraction === "STT").reduce((sum, record) => sum + record.minutes, 0), tone: "coral" },
+      { label: "Sans attraction", value: records.filter((record) => !record.plan.attraction).reduce((sum, record) => sum + record.minutes, 0), tone: "muted" }
+    ], formatHours);
+
+    $("hoursBreakdown").innerHTML = records.length ? records.map((record) => {
+      const plan = record.plan;
+      return `<button class="hour-row ${plan.provisional ? "provisional" : ""}" type="button" data-edit-day="${record.dateKey}">
+        <span><strong>${escapeHtml(capitalize(shortDate.format(record.date)))}</strong><small>${escapeHtml(plan.attraction || "Sans attraction")} · ${escapeHtml(getShiftRoleLabel(plan))}</small></span>
+        <span><strong>${plan.start}–${plan.end}</strong><small>${plan.provisional ? "Prévisionnel" : "Confirmé"}</small></span>
+        <b>${escapeHtml(formatDuration(record.minutes))}</b>
+      </button>`;
+    }).join("") : '<div class="empty-state">Aucun shift avec des horaires complets sur cette période.</div>';
   }
 
   function renderCalendar(data) {
@@ -387,9 +545,10 @@
         if (isSameDay(date, data.today)) classes.push("today");
         if (leadMilestone) classes.push("milestone");
         if (dateMilestones.some((item) => item.important)) classes.push("important");
+        if (plan.provisional) classes.push("provisional");
         if (state.calendarFilter === "work" && !plan.worked) classes.push("hidden-by-filter");
         if (state.calendarFilter === "off" && plan.worked) classes.push("hidden-by-filter");
-        const shiftTitle = inContract && plan.worked ? [plan.start && plan.end ? `${plan.start}-${plan.end}` : "horaires libres", plan.attraction].filter(Boolean).join(" · ") : "repos";
+        const shiftTitle = inContract && plan.worked ? [plan.provisional ? "prévisionnel" : "", plan.start && plan.end ? `${plan.start}-${plan.end}` : "horaires libres", plan.attraction, getShiftRoles(plan).join(" + ")].filter(Boolean).join(" · ") : "repos";
         const milestoneTitle = dateMilestones.length ? ` · ${dateMilestones.map((item) => item.name).join(", ")}` : "";
         const title = `${longDate.format(date)} · ${shiftTitle}${milestoneTitle}`;
         const style = leadMilestone ? ` style="--milestone-color:${COLORS[leadMilestone.color]}"` : "";
@@ -470,29 +629,90 @@
     setText("nextLevelLabel", data.level === 10 ? "Niveau maximum atteint" : `Prochain niveau dans ${Math.max(0, data.level * 250 - data.xp)} XP`);
     setText("xpPercent", formatPercent(levelProgress));
     $("xpRing").style.setProperty("--xp", `${levelProgress}%`);
-    setText("workStatsTitle", `${data.workDone} sur ${data.workDays.length}`);
-    setText("workPercent", formatPercent(data.workProgress));
-    setText("scheduledHours", `${data.planning.hours.toFixed(data.planning.hours % 1 ? 1 : 0).replace(".", ",")} h`);
-    setText("hsmCount", data.planning.hsm);
-    setText("sttCount", data.planning.stt);
-    setText("planningFill", formatPercent(data.planning.fill));
+    const records = data.planning.timedRecords;
+    const durations = records.map((record) => record.minutes);
+    const averageMinutes = records.length ? Math.round(data.planning.minutes / records.length) : 0;
+    const medianMinutes = Math.round(median(durations));
+    const highlights = [
+      { label: "Heures totales", value: formatHours(data.planning.minutes), tone: "acid" },
+      { label: "Shifts renseignés", value: records.length, tone: "cyan" },
+      { label: "Durée moyenne", value: formatHours(averageMinutes), tone: "gold" },
+      { label: "Durée médiane", value: formatHours(medianMinutes), tone: "violet" },
+      { label: "Heures confirmées", value: formatHours(data.planning.confirmedMinutes), tone: "green" },
+      { label: "Heures prévisionnelles", value: formatHours(data.planning.provisionalMinutes), tone: "coral" },
+      { label: "Shifts OPEN", value: data.planning.open, tone: "cyan" },
+      { label: "Shifts CLOSE", value: data.planning.close, tone: "coral" }
+    ];
+    $("statsHighlights").innerHTML = highlights.map((item) => `<article class="${item.tone}"><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></article>`).join("");
 
-    $("workMatrix").innerHTML = data.workDays.map((day) => {
-      const plan = getDayPlan(day);
-      const cls = day < data.today ? "done" : isSameDay(day, data.today) ? "today" : "future";
-      const attractionClass = plan.attraction ? `attraction-${plan.attraction.toLowerCase()}` : "";
-      const details = [longDate.format(day), plan.start && plan.end ? `${plan.start}-${plan.end}` : "horaires libres", plan.attraction].filter(Boolean).join(" · ");
-      return `<button class="work-unit ${cls} ${attractionClass}" type="button" data-edit-day="${toDateKey(day)}" title="${escapeHtml(details)}" aria-label="Configurer ${escapeHtml(longDate.format(day))}">${day.getDate()}</button>`;
-    }).join("");
+    const missingTimes = Math.max(0, data.workDays.length - data.planning.timed);
+    const missingAttraction = data.planning.records.filter((record) => record.timed && !record.plan.attraction).length;
+    setText("statsCompletionRate", formatPercent(data.planning.fill));
+    $("statsCompletionBar").style.width = `${data.planning.fill}%`;
+    $("statsQualityGrid").innerHTML = [
+      [data.workDays.length, "jours travaillés"],
+      [data.planning.timed, "horaires complets"],
+      [data.planning.complete, "shifts complets"],
+      [missingTimes, "horaires manquants"],
+      [missingAttraction, "attractions manquantes"],
+      [data.planning.provisional, "prévisionnels"]
+    ].map(([value, label]) => `<div><strong>${value}</strong><span>${label}</span></div>`).join("");
 
-    setText("weekCountLabel", data.totalWeeks);
-    $("weekList").innerHTML = Array.from({ length: data.totalWeeks }, (_, index) => {
-      const weekStart = addDays(data.start, index * 7);
-      const weekEnd = new Date(Math.min(addDays(weekStart, 6).getTime(), data.end.getTime()));
-      const completed = data.today > weekEnd ? 100 : data.today < weekStart ? 0 : clamp((dayDifference(weekStart, data.today) + 1) / (dayDifference(weekStart, weekEnd) + 1) * 100, 0, 100);
-      const current = index + 1 === data.currentWeek && data.today >= data.start && data.today <= data.end;
-      return `<div class="week-row ${current ? "current" : ""}"><span>S${index + 1}</span><div class="week-bar"><i style="width:${completed}%"></i></div><strong>${Math.round(completed)} %</strong></div>`;
-    }).join("");
+    const attractionItems = ["HSM", "STT", ""].map((attraction) => {
+      const matching = records.filter((record) => record.plan.attraction === attraction);
+      return {
+        label: attraction || "Sans attraction",
+        value: matching.reduce((sum, record) => sum + record.minutes, 0),
+        detail: `${matching.length} ${plural(matching.length, "shift")}`,
+        tone: attraction === "HSM" ? "cyan" : attraction === "STT" ? "coral" : "muted"
+      };
+    });
+    renderBarRows("statsAttractionBars", attractionItems, formatHours);
+
+    const openOnly = records.filter((record) => record.roles.length === 1 && record.roles[0] === "OPEN").length;
+    const closeOnly = records.filter((record) => record.roles.length === 1 && record.roles[0] === "CLOSE").length;
+    const openClose = records.filter((record) => record.roles.length === 2).length;
+    const standard = records.filter((record) => !record.roles.length).length;
+    renderBarRows("statsRoleBars", [
+      { label: "OPEN", value: openOnly, tone: "cyan" },
+      { label: "CLOSE", value: closeOnly, tone: "coral" },
+      { label: "OPEN + CLOSE", value: openClose, tone: "gold" },
+      { label: "Standard", value: standard, tone: "muted" }
+    ], (value) => `${value} ${plural(value, "shift")}`);
+
+    const monthItems = [...new Set(data.allDays.map(getMonthKey))].map((key) => ({
+      label: capitalize(monthYear.format(parseDateKey(`${key}-01`))),
+      key,
+      value: records.filter((record) => record.monthKey === key).reduce((sum, record) => sum + record.minutes, 0),
+      tone: "acid"
+    }));
+    renderBarRows("statsMonthBars", monthItems, formatHours);
+
+    const weekdayItems = WEEKDAY_ORDER.map((day) => ({
+      label: WEEKDAY_SHORT[day],
+      day,
+      value: records.filter((record) => record.date.getDay() === day).reduce((sum, record) => sum + record.minutes, 0),
+      tone: "violet"
+    }));
+    renderBarRows("statsWeekdayBars", weekdayItems, formatHours);
+
+    const longest = records.reduce((best, record) => !best || record.minutes > best.minutes ? record : best, null);
+    const shortest = records.reduce((best, record) => !best || record.minutes < best.minutes ? record : best, null);
+    const earliest = records.reduce((best, record) => !best || record.plan.start < best.plan.start ? record : best, null);
+    const latest = records.reduce((best, record) => !best || shiftEndTimelineMinutes(record) > shiftEndTimelineMinutes(best) ? record : best, null);
+    const busiestMonth = monthItems.reduce((best, item) => !best || item.value > best.value ? item : best, null);
+    const busiestWeekday = weekdayItems.reduce((best, item) => !best || item.value > best.value ? item : best, null);
+    const recordItems = [
+      { label: "Shift le plus long", value: longest ? formatDuration(longest.minutes) : "—", detail: longest ? capitalize(shortDate.format(longest.date)) : "Aucune donnée" },
+      { label: "Shift le plus court", value: shortest ? formatDuration(shortest.minutes) : "—", detail: shortest ? capitalize(shortDate.format(shortest.date)) : "Aucune donnée" },
+      { label: "Début le plus tôt", value: earliest ? earliest.plan.start : "—", detail: earliest ? capitalize(shortDate.format(earliest.date)) : "Aucune donnée" },
+      { label: "Fin la plus tardive", value: latest ? latest.plan.end : "—", detail: latest ? capitalize(shortDate.format(latest.date)) : "Aucune donnée" },
+      { label: "Mois le plus chargé", value: busiestMonth && busiestMonth.value ? formatHours(busiestMonth.value) : "—", detail: busiestMonth && busiestMonth.value ? busiestMonth.label : "Aucune donnée" },
+      { label: "Jour le plus chargé", value: busiestWeekday && busiestWeekday.value ? formatHours(busiestWeekday.value) : "—", detail: busiestWeekday && busiestWeekday.value ? busiestWeekday.label : "Aucune donnée" },
+      { label: "Shifts de nuit", value: data.planning.overnight, detail: "fin après minuit" },
+      { label: "Moyenne par semaine", value: formatHours(Math.round(data.planning.minutes / Math.max(1, data.totalWeeks))), detail: `${data.totalWeeks} ${plural(data.totalWeeks, "semaine")}` }
+    ];
+    $("statsRecords").innerHTML = recordItems.map((item) => `<article><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong><small>${escapeHtml(item.detail)}</small></article>`).join("");
 
     const achievements = buildAchievements(data);
     const unlocked = achievements.filter((item) => item.unlocked);
@@ -596,6 +816,8 @@
     applyPetDecay();
     const data = getContractData();
     renderHome(data);
+    renderPlanning(data);
+    renderHours(data);
     renderCalendar(data);
     renderMilestones(data);
     renderStats(data);
@@ -609,6 +831,10 @@
     document.querySelectorAll(".view").forEach((section) => section.classList.toggle("active", section.id === `view-${view}`));
     document.querySelectorAll(".bottom-nav [data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === view));
     window.scrollTo({ top: 0, behavior: "smooth" });
+    const data = getContractData();
+    if (view === "planning") renderPlanning(data);
+    if (view === "hours") renderHours(data);
+    if (view === "stats") renderStats(data);
     if (view === "game") renderPet();
   }
 
@@ -661,6 +887,7 @@
     setText("daySheetTitle", capitalize(new Intl.DateTimeFormat("fr-FR", { weekday: "long" }).format(date)));
     setText("daySheetDate", capitalize(longDate.format(date)));
     $("dayWorked").checked = plan.worked;
+    $("dayProvisional").checked = Boolean(plan.provisional);
     $("shiftStart").value = plan.start;
     $("shiftEnd").value = plan.end;
     $("shiftNote").value = plan.note;
@@ -672,10 +899,13 @@
 
   function updateDayFormState() {
     const worked = $("dayWorked").checked;
+    if (!worked) $("dayProvisional").checked = false;
     [$("shiftStart"), $("shiftEnd"), $("shiftNote")].forEach((input) => { input.disabled = !worked; });
+    $("dayProvisional").disabled = !worked;
     document.querySelectorAll('input[name="attraction"]').forEach((input) => { input.disabled = !worked; });
     $("dayForm").querySelector(".shift-time-fields").classList.toggle("disabled", !worked);
     $("dayForm").querySelector(".attraction-field").classList.toggle("disabled", !worked);
+    $("dayForm").querySelector(".provisional-toggle").classList.toggle("disabled", !worked);
     $("shiftNote").closest(".field").classList.toggle("disabled", !worked);
     updateShiftDuration();
   }
@@ -683,6 +913,11 @@
   function updateShiftDuration() {
     const plan = { worked: $("dayWorked").checked, start: $("shiftStart").value, end: $("shiftEnd").value };
     setText("shiftDuration", formatDuration(shiftDurationMinutes(plan)));
+    const roles = getShiftRoles(plan);
+    const status = $("shiftAutoStatus");
+    status.textContent = roles.length ? roles.join(" + ") : "STANDARD";
+    status.classList.toggle("open", roles.includes("OPEN"));
+    status.classList.toggle("close", roles.includes("CLOSE"));
   }
 
   function openSettings() {
@@ -730,7 +965,7 @@
 
   function exportShifts() {
     const payload = {
-      app: "cap-contrat-shifts", version: 1, savedAt: new Date().toISOString(),
+      app: "cap-contrat-shifts", version: 2, savedAt: new Date().toISOString(),
       contract: { start: state.settings.start, end: state.settings.end }, shifts: state.shifts
     };
     downloadJson(payload, `cap-contrat-shifts-${toDateKey(new Date())}.json`);
@@ -792,7 +1027,17 @@
       renderCalendar(getContractData());
     });
     $("calendarList").addEventListener("click", (event) => { const button = event.target.closest("[data-edit-day]"); if (button) openDayEditor(button.dataset.editDay); });
-    $("workMatrix").addEventListener("click", (event) => { const button = event.target.closest("[data-edit-day]"); if (button) openDayEditor(button.dataset.editDay); });
+
+    $("planningFilter").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-planning-filter]");
+      if (!button) return;
+      state.planningFilter = button.dataset.planningFilter;
+      document.querySelectorAll("#planningFilter button").forEach((item) => item.classList.toggle("active", item === button));
+      renderPlanning(getContractData());
+    });
+    $("planningList").addEventListener("click", (event) => { const button = event.target.closest("[data-edit-day]"); if (button) openDayEditor(button.dataset.editDay); });
+    $("hoursPeriod").addEventListener("change", (event) => { state.hoursPeriod = event.target.value; renderHours(getContractData()); });
+    $("hoursBreakdown").addEventListener("click", (event) => { const button = event.target.closest("[data-edit-day]"); if (button) openDayEditor(button.dataset.editDay); });
 
     $("jumpCurrentMonth").addEventListener("click", () => {
       const data = getContractData();
@@ -834,6 +1079,7 @@
         start: isTime($("shiftStart").value) ? $("shiftStart").value : "",
         end: isTime($("shiftEnd").value) ? $("shiftEnd").value : "",
         attraction: attraction && (attraction.value === "HSM" || attraction.value === "STT") ? attraction.value : "",
+        provisional: $("dayWorked").checked && $("dayProvisional").checked,
         note: $("shiftNote").value.trim().slice(0, 100)
       };
       saveShifts(); closeSheets(); renderAll(); showToast("Journée enregistrée dans le planning");
