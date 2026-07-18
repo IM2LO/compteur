@@ -85,7 +85,7 @@
           <article><strong id="planningDayCount">0</strong><span>jours travaillés</span></article>
           <article><strong id="planningTimedCount">0</strong><span>horaires saisis</span></article>
           <article><strong id="planningProvisionalCount">0</strong><span>prévisionnels</span></article>
-          <article><strong id="planningHoursTotal">0 h</strong><span>au total</span></article>
+          <article><strong id="planningHoursTotal">0 h</strong><span>effectives hors pauses</span></article>
         </div>
         <div class="segmented-control" id="planningFilter" aria-label="Filtrer le planning">
           <button class="active" type="button" data-planning-filter="all">Tout</button>
@@ -252,6 +252,12 @@
         </section>
 
         <section class="stats-block">
+          <div class="section-heading"><div><span class="section-caption">Intermèdes bien mérités</span><h2>Breaks &amp; lunchs</h2></div></div>
+          <div class="pause-stats-grid" id="statsPauseSummary"></div>
+          <div class="stats-bars pause-bars" id="statsPauseBars"></div>
+        </section>
+
+        <section class="stats-block">
           <div class="section-heading"><div><span class="section-caption">Records</span><h2>Rythme du planning</h2></div></div>
           <div class="record-grid" id="statsRecords"></div>
         </section>
@@ -340,7 +346,13 @@
       <label class="toggle-row provisional-toggle"><span><strong>Horaire prévisionnel</strong><small>À activer uniquement si le shift peut encore changer</small></span><input id="dayProvisional" type="checkbox"><i></i></label>
       <div class="field-pair shift-time-fields"><label class="field"><span>Début planifié</span><input id="shiftStart" type="time"></label><label class="field"><span>Fin planifiée</span><input id="shiftEnd" type="time"></label></div>
       <fieldset class="badge-field"><legend>Badgeage réel — prioritaire pour la paie</legend><div class="field-pair"><label class="field"><span>Entrée réelle</span><input id="actualStart" type="time"></label><label class="field"><span>Sortie réelle</span><input id="actualEnd" type="time"></label></div><small>Laisse vide pour utiliser l’horaire planifié avec 5 minutes avant et 5 minutes après.</small></fieldset>
-      <fieldset class="break-field"><legend>Pauses non rémunérées</legend><div class="field-pair"><label class="field"><span>Pause totale (min)</span><input id="breakMinutes" type="number" min="0" max="720" step="1" placeholder="Automatique"></label><label class="field"><span>Dont entre 22 h et 7 h</span><input id="nightBreakMinutes" type="number" min="0" max="720" step="1" value="0"></label></div><small>Sans valeur manuelle : 15 min jusqu’à 7 h 15 d’amplitude, 60 min jusqu’à 9 h, puis 75 min.</small></fieldset>
+      <fieldset class="break-field"><legend>Pauses automatiques non rémunérées</legend>
+        <div class="pause-preview-summary"><div><span>Régime</span><strong id="shiftPauseRule">Aucune</strong></div><div><span>Total</span><strong id="shiftPauseTotal">0 min</strong></div><div><span>Travail effectif</span><strong id="shiftEffectiveDuration">--</strong></div></div>
+        <div class="pause-editor-list" id="shiftPauseList"></div>
+        <p class="pause-validation" id="shiftPauseValidation">Renseigne les horaires pour calculer les pauses.</p>
+        <button class="secondary-button pause-recalculate" id="recalculatePauses" type="button">Recalculer toutes les pauses</button>
+        <small>Les pauses sont réparties automatiquement. Modifie leur heure pour les verrouiller manuellement ; B dure 15 min et L dure 45 min.</small>
+      </fieldset>
       <fieldset class="attraction-field"><legend>Attraction attitrée</legend><div><label><input type="radio" name="attraction" value="HSM"><span>HSM</span></label><label><input type="radio" name="attraction" value="STT"><span>STT</span></label><label><input type="radio" name="attraction" value=""><span>Aucune</span></label></div></fieldset>
       <label class="field"><span>Note de journée</span><input id="shiftNote" type="text" maxlength="100" placeholder="Équipe, événement, souvenir..."></label>
       <div class="shift-duration"><span>Amplitude planifiée</span><strong id="shiftDuration">--</strong></div>
@@ -351,6 +363,7 @@
   </section>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="breaks.js"></script>
   <script src="payroll.js"></script>
   <script src="app.js"></script>
 </body>

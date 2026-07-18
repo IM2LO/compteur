@@ -45,6 +45,11 @@
     milestones: loadMilestones(),
     shifts: loadShifts(),
     payrollSettings: loadPayrollSettings(),
+    dayPauseDraft: [],
+    dayPauseLastStart: "",
+    dayPauseLastEnd: "",
+    dayPauseRequiresReset: false,
+    dayPauseWarning: "",
     toastTimer: null
   };
 
@@ -104,7 +109,7 @@
     const normalized = {};
     Object.entries(raw).forEach(([date, value]) => {
       if (!isDateKey(date) || !value || typeof value !== "object") return;
-      normalized[date] = {
+      const plan = {
         worked: Boolean(value.worked),
         start: isTime(value.start) ? value.start : "",
         end: isTime(value.end) ? value.end : "",
@@ -116,6 +121,13 @@
         provisional: Boolean(value.provisional),
         note: typeof value.note === "string" ? value.note.trim().slice(0, 100) : ""
       };
+      const pauseData = normalizeShiftPauseData(date, plan, value.pauses);
+      normalized[date] = {
+        ...plan,
+        pauses: pauseData.pauses,
+        pauseRuleCode: pauseData.pauseRuleCode,
+        pauseValidation: pauseData.validationStatus
+      };
     });
     return normalized;
   }
@@ -124,6 +136,29 @@
     if (value === "" || value === null || typeof value === "undefined") return null;
     const number = Number(value);
     return Number.isFinite(number) ? Math.max(0, Math.round(number)) : null;
+  }
+
+  function emptyPauseData() {
+    return {
+      pauses: [],
+      pauseRuleCode: "",
+      validationStatus: { valid: true, longestContinuousWorkMinutes: 0, problemPeriod: null, message: "Aucun horaire à valider." }
+    };
+  }
+
+  function normalizeShiftPauseData(dateKey, plan, storedPauses) {
+    if (!plan.worked || !isTime(plan.start) || !isTime(plan.end) || !shiftDurationMinutes(plan)) return emptyPauseData();
+    const shift = { id: dateKey, dateKey, start: plan.start, end: plan.end };
+    const automatic = CapBreaks.recalculateShiftPauses(shift);
+    if (!Array.isArray(storedPauses)) return automatic;
+    const pauses = CapBreaks.normalizePauses(storedPauses, shift);
+    const validationStatus = CapBreaks.validateContinuousWorkLimit(shift, pauses);
+    if (!validationStatus.valid && !pauses.some((pause) => pause.source === "manual" || pause.locked)) return automatic;
+    return {
+      pauses,
+      pauseRuleCode: CapBreaks.getPauseRuleForAmplitude(automatic.amplitudeMinutes),
+      validationStatus
+    };
   }
 
   function loadPayrollSettings() {
@@ -188,23 +223,16 @@
     if (override) return { ...override, custom: true };
     return {
       worked: isBaseWorkDay(parseDateKey(key)), start: "", end: "", actualStart: "", actualEnd: "",
-      breakMinutes: null, nightBreakMinutes: 0, attraction: "", provisional: false, note: "", custom: false
+      breakMinutes: null, nightBreakMinutes: 0, pauses: [], pauseRuleCode: "", pauseValidation: emptyPauseData().validationStatus,
+      attraction: "", provisional: false, note: "", custom: false
     };
   }
 
   function isPlannedWorkDay(date) { return getDayPlan(date).worked; }
 
-  function timeToMinutes(value) {
-    if (!isTime(value)) return 0;
-    const [hours, minutes] = value.split(":").map(Number);
-    return hours * 60 + minutes;
-  }
-
   function shiftDurationMinutes(plan) {
     if (!plan.worked || !isTime(plan.start) || !isTime(plan.end)) return 0;
-    let duration = timeToMinutes(plan.end) - timeToMinutes(plan.start);
-    if (duration < 0) duration += 1440;
-    return duration;
+    return CapBreaks.calculateShiftAmplitude(plan.start, plan.end) || 0;
   }
 
   function formatDuration(minutes) {
@@ -239,7 +267,9 @@
 
   function getShiftRecord(date) {
     const plan = getDayPlan(date);
-    const minutes = shiftDurationMinutes(plan);
+    const amplitudeMinutes = shiftDurationMinutes(plan);
+    const pauseMinutes = CapBreaks.calculateTotalPauseMinutes(plan.pauses);
+    const minutes = amplitudeMinutes ? Math.max(0, amplitudeMinutes - pauseMinutes) : 0;
     const roles = getShiftRoles(plan);
     const dateKey = toDateKey(date);
     const payroll = CapPayroll.buildPayrollDay({ dateKey, plan });
@@ -249,10 +279,12 @@
       monthKey: getMonthKey(date),
       plan,
       minutes,
+      amplitudeMinutes,
+      pauseMinutes,
       payroll,
       roles,
-      timed: minutes > 0,
-      complete: Boolean(plan.worked && minutes > 0 && plan.attraction)
+      timed: amplitudeMinutes > 0,
+      complete: Boolean(plan.worked && amplitudeMinutes > 0 && plan.attraction)
     };
   }
 
@@ -425,6 +457,23 @@
     </div>`).join("");
   }
 
+  function getPauseClockLabel(plan, pause) {
+    const clock = CapBreaks.getPauseClock(pause, plan.start);
+    if (!clock.start || !clock.end) return `${pause.type} — ${pause.durationMinutes} min`;
+    const suffix = clock.dayOffset > 0 ? " +1" : "";
+    return `${pause.type} ${clock.start}–${clock.end}${suffix}`;
+  }
+
+  function getPauseDetailLabel(plan) {
+    if (!Array.isArray(plan.pauses) || !plan.pauses.length) return "Aucune pause";
+    return plan.pauses.map((pause) => `${getPauseClockLabel(plan, pause)} (${pause.durationMinutes} min)`).join(" · ");
+  }
+
+  function renderPlanningPauses(plan) {
+    if (!Array.isArray(plan.pauses) || !plan.pauses.length) return '<span class="planning-no-pause">Sans pause</span>';
+    return plan.pauses.map((pause) => `<span class="planning-pause-chip ${pause.type === "L" ? "lunch" : "break"}">${escapeHtml(getPauseClockLabel(plan, pause))}</span>`).join("");
+  }
+
   function renderPlanning(data) {
     const planning = data.planning;
     setText("planningDayCount", data.workDays.length);
@@ -454,11 +503,12 @@
           : plan.worked ? '<span class="shift-role standard">STANDARD</span>' : "";
         const provisionalTag = plan.provisional ? '<span class="provisional-badge">Prévisionnel</span>' : "";
         const timeLabel = record.timed ? `${plan.start}–${plan.end}` : plan.worked ? "Horaires à compléter" : "Journée de repos";
+        const pauseLine = record.timed ? `<span class="planning-pause-line">${renderPlanningPauses(plan)}</span>` : "";
         return `<button class="planning-row ${plan.worked ? "work" : "off"} ${plan.provisional ? "provisional" : ""}" type="button" data-edit-day="${record.dateKey}">
           <span class="planning-date"><strong>${WEEKDAY_SHORT[record.date.getDay()]}</strong><b>${record.date.getDate()}</b></span>
-          <span class="planning-main"><strong>${escapeHtml(plan.worked ? (plan.attraction || "Sans attraction") : "Repos")}</strong><small>${escapeHtml(timeLabel)}</small>${provisionalTag}</span>
+          <span class="planning-main"><strong>${escapeHtml(plan.worked ? (plan.attraction || "Sans attraction") : "Repos")}</strong><small>${escapeHtml(timeLabel)}</small>${pauseLine}${provisionalTag}</span>
           <span class="planning-role">${roleTags}</span>
-          <span class="planning-duration"><strong>${record.timed ? escapeHtml(formatDuration(record.minutes)) : "—"}</strong><small>amplitude</small></span>
+          <span class="planning-duration"><strong>${record.timed ? escapeHtml(formatDuration(record.amplitudeMinutes)) : "—"}</strong><small>${record.timed ? `${escapeHtml(formatDuration(record.minutes))} net` : "amplitude"}</small></span>
         </button>`;
       }).join("");
       return `<section class="planning-month"><div class="planning-month-title"><h2>${escapeHtml(capitalize(monthYear.format(parseDateKey(`${monthKey}-01`))))}</h2><span>${monthRecords.length} ${plural(monthRecords.length, "jour")}</span></div>${rows}</section>`;
@@ -497,7 +547,7 @@
       const plan = record.plan;
       return `<button class="hour-row ${plan.provisional ? "provisional" : ""}" type="button" data-edit-day="${record.dateKey}">
         <span><strong>${escapeHtml(capitalize(shortDate.format(record.date)))}</strong><small>${escapeHtml(plan.attraction || "Sans attraction")} · ${escapeHtml(getShiftRoleLabel(plan))}</small></span>
-        <span><strong>${plan.start}–${plan.end}</strong><small>${plan.provisional ? "Prévisionnel" : "Confirmé"}</small></span>
+        <span><strong>${plan.start}–${plan.end}</strong><small>${escapeHtml(plan.pauseRuleCode || "Sans pause")} · ${plan.provisional ? "Prévisionnel" : "Confirmé"}</small></span>
         <b>${escapeHtml(formatDuration(record.minutes))}</b>
       </button>`;
     }).join("") : '<div class="empty-state">Aucun shift avec des horaires complets sur cette période.</div>';
@@ -601,13 +651,16 @@
         if (plan.provisional) classes.push("provisional");
         if (state.calendarFilter === "work" && !plan.worked) classes.push("hidden-by-filter");
         if (state.calendarFilter === "off" && plan.worked) classes.push("hidden-by-filter");
-        const shiftTitle = inContract && plan.worked ? [plan.provisional ? "prévisionnel" : "", plan.start && plan.end ? `${plan.start}-${plan.end}` : "horaires libres", plan.attraction, getShiftRoles(plan).join(" + ")].filter(Boolean).join(" · ") : "repos";
+        const shiftTitle = inContract && plan.worked ? [plan.provisional ? "prévisionnel" : "", plan.start && plan.end ? `${plan.start}-${plan.end}` : "horaires libres", plan.attraction, getShiftRoles(plan).join(" + "), plan.start && plan.end ? getPauseDetailLabel(plan) : ""].filter(Boolean).join(" · ") : "repos";
         const milestoneTitle = dateMilestones.length ? ` · ${dateMilestones.map((item) => item.name).join(", ")}` : "";
         const title = `${longDate.format(date)} · ${shiftTitle}${milestoneTitle}`;
         const style = leadMilestone ? ` style="--milestone-color:${COLORS[leadMilestone.color]}"` : "";
         const tag = inContract ? "button" : "span";
         const attrs = inContract ? ` type="button" data-edit-day="${dateKey}" aria-label="Configurer ${escapeHtml(longDate.format(date))}"` : "";
-        cells.push(`<${tag} class="${classes.join(" ")}" title="${escapeHtml(title)}"${style}${attrs}>${day}</${tag}>`);
+        const pauseMarks = inContract && plan.worked && plan.pauses.length
+          ? `<span class="calendar-pause-marks" aria-hidden="true">${plan.pauses.map((pause) => `<i class="calendar-pause-mark ${pause.type === "L" ? "lunch" : "break"}">${pause.type}</i>`).join("")}</span>`
+          : "";
+        cells.push(`<${tag} class="${classes.join(" ")}" title="${escapeHtml(title)}"${style}${attrs}><span class="calendar-number">${day}</span>${pauseMarks}</${tag}>`);
       }
       return `<section class="month-section ${key === currentMonthKey ? "current-month" : ""}" data-month="${key}">
         <div class="month-title"><h2>${escapeHtml(monthOnly.format(month))}</h2><span>${month.getFullYear()}</span></div>
@@ -777,6 +830,31 @@
     }));
     renderBarRows("statsWeekdayBars", weekdayItems, formatHours);
 
+    const allPauses = records.flatMap((record) => Array.isArray(record.plan.pauses) ? record.plan.pauses : []);
+    const breakCount = allPauses.filter((pause) => pause.type === "B").length;
+    const lunchCount = allPauses.filter((pause) => pause.type === "L").length;
+    const totalPauseMinutes = CapBreaks.calculateTotalPauseMinutes(allPauses);
+    const manualCount = allPauses.filter((pause) => pause.source === "manual" || pause.locked).length;
+    const conformingShifts = records.filter((record) => CapBreaks.validateContinuousWorkLimit(record.plan, record.plan.pauses).valid).length;
+    const pauseShiftCount = records.filter((record) => record.plan.pauses.length).length;
+    const averagePauseMinutes = records.length ? Math.round(totalPauseMinutes / records.length) : 0;
+    $("statsPauseSummary").innerHTML = [
+      [breakCount, "breaks de 15 min"],
+      [lunchCount, "lunchs de 45 min"],
+      [formatHours(totalPauseMinutes), "temps total en pause"],
+      [averagePauseMinutes ? `${averagePauseMinutes} min` : "0 min", "pause moyenne par shift"],
+      [manualCount, "pauses déplacées manuellement"],
+      [`${conformingShifts}/${records.length}`, "shifts conformes aux 3 h 30"]
+    ].map(([value, label]) => `<article><strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span></article>`).join("");
+    const pauseRegimes = ["B", "BB", "L", "BL", "BLB"].map((code) => ({
+      label: code,
+      value: records.filter((record) => record.plan.pauseRuleCode === code).length,
+      detail: `${records.filter((record) => record.plan.pauseRuleCode === code).length} ${plural(records.filter((record) => record.plan.pauseRuleCode === code).length, "shift")}`,
+      tone: code.includes("L") ? "cyan" : "gold"
+    }));
+    pauseRegimes.push({ label: "Sans pause", value: Math.max(0, records.length - pauseShiftCount), tone: "muted" });
+    renderBarRows("statsPauseBars", pauseRegimes, (value) => `${value} ${plural(value, "shift")}`);
+
     const longest = records.reduce((best, record) => !best || record.minutes > best.minutes ? record : best, null);
     const shortest = records.reduce((best, record) => !best || record.minutes < best.minutes ? record : best, null);
     const busiestMonth = monthItems.reduce((best, item) => !best || item.value > best.value ? item : best, null);
@@ -874,8 +952,11 @@
     $("shiftEnd").value = plan.end;
     $("actualStart").value = plan.actualStart;
     $("actualEnd").value = plan.actualEnd;
-    $("breakMinutes").value = plan.breakMinutes === null ? "" : plan.breakMinutes;
-    $("nightBreakMinutes").value = plan.nightBreakMinutes || 0;
+    state.dayPauseDraft = CapBreaks.normalizePauses(plan.pauses, { id: dateKey, dateKey });
+    state.dayPauseLastStart = plan.start;
+    state.dayPauseLastEnd = plan.end;
+    state.dayPauseRequiresReset = Boolean(plan.pauseValidation && !plan.pauseValidation.valid);
+    state.dayPauseWarning = state.dayPauseRequiresReset ? plan.pauseValidation.message : "";
     $("shiftNote").value = plan.note;
     const attraction = document.querySelector(`input[name="attraction"][value="${plan.attraction}"]`);
     if (attraction) attraction.checked = true;
@@ -886,7 +967,7 @@
   function updateDayFormState() {
     const worked = $("dayWorked").checked;
     if (!worked) $("dayProvisional").checked = false;
-    [$("shiftStart"), $("shiftEnd"), $("actualStart"), $("actualEnd"), $("breakMinutes"), $("nightBreakMinutes"), $("shiftNote")].forEach((input) => { input.disabled = !worked; });
+    [$("shiftStart"), $("shiftEnd"), $("actualStart"), $("actualEnd"), $("shiftNote")].forEach((input) => { input.disabled = !worked; });
     $("dayProvisional").disabled = !worked;
     document.querySelectorAll('input[name="attraction"]').forEach((input) => { input.disabled = !worked; });
     $("dayForm").querySelector(".shift-time-fields").classList.toggle("disabled", !worked);
@@ -895,7 +976,115 @@
     $("dayForm").querySelector(".attraction-field").classList.toggle("disabled", !worked);
     $("dayForm").querySelector(".provisional-toggle").classList.toggle("disabled", !worked);
     $("shiftNote").closest(".field").classList.toggle("disabled", !worked);
+    if (!worked) {
+      state.dayPauseDraft = [];
+      state.dayPauseRequiresReset = false;
+      state.dayPauseWarning = "";
+    } else if (isTime($("shiftStart").value) && isTime($("shiftEnd").value) && !state.dayPauseDraft.length) {
+      recalculateEditorPauses(true);
+    }
     updateShiftDuration();
+  }
+
+  function editorShift() {
+    return {
+      id: $("dayEditDate").value || "draft",
+      dateKey: $("dayEditDate").value,
+      start: $("shiftStart").value,
+      end: $("shiftEnd").value
+    };
+  }
+
+  function translatePauseOffset(pause, previousStart, nextStart) {
+    const previousStartMinutes = CapBreaks.timeToMinutes(previousStart);
+    const nextStartMinutes = CapBreaks.timeToMinutes(nextStart);
+    if (previousStartMinutes === null || nextStartMinutes === null) return pause.startOffsetMinutes;
+    let nextOffset = previousStartMinutes + pause.startOffsetMinutes - nextStartMinutes;
+    while (nextOffset < 0) nextOffset += 1440;
+    return nextOffset;
+  }
+
+  function recalculateEditorPauses(force = false) {
+    const shift = editorShift();
+    const amplitude = CapBreaks.calculateShiftAmplitude(shift.start, shift.end);
+    if (!amplitude) {
+      const hasManualPause = state.dayPauseDraft.some((pause) => pause.source === "manual" || pause.locked);
+      if (hasManualPause) {
+        state.dayPauseRequiresReset = true;
+        state.dayPauseWarning = "Les horaires sont incomplets. Les pauses manuelles sont conservées jusqu’au prochain recalcul.";
+      } else {
+        state.dayPauseDraft = [];
+        state.dayPauseRequiresReset = false;
+        state.dayPauseWarning = "";
+        state.dayPauseLastStart = shift.start;
+        state.dayPauseLastEnd = shift.end;
+      }
+      return;
+    }
+
+    const automatic = CapBreaks.recalculateShiftPauses(shift);
+    const manualPauses = state.dayPauseDraft.filter((pause) => pause.source === "manual" || pause.locked);
+    const timesChanged = shift.start !== state.dayPauseLastStart || shift.end !== state.dayPauseLastEnd;
+    if (force || !manualPauses.length || !timesChanged) {
+      state.dayPauseDraft = automatic.pauses;
+      state.dayPauseRequiresReset = !automatic.validationStatus.valid;
+      state.dayPauseWarning = automatic.validationStatus.valid ? "" : automatic.validationStatus.message;
+    } else {
+      const previousRule = CapBreaks.getPauseRuleForAmplitude(CapBreaks.calculateShiftAmplitude(state.dayPauseLastStart, state.dayPauseLastEnd));
+      if (previousRule !== automatic.pauseRuleCode) {
+        state.dayPauseDraft = state.dayPauseDraft.map((pause) => {
+          const startOffsetMinutes = translatePauseOffset(pause, state.dayPauseLastStart, shift.start);
+          return { ...pause, startOffsetMinutes, endOffsetMinutes: startOffsetMinutes + pause.durationMinutes };
+        });
+        state.dayPauseRequiresReset = true;
+        state.dayPauseWarning = `Le shift passe de ${previousRule || "sans pause"} à ${automatic.pauseRuleCode || "sans pause"}. Les pauses manuelles ont été conservées : lance un recalcul pour appliquer le nouveau régime.`;
+      } else {
+        const candidate = automatic.pauses.map((pause, index) => {
+          const previous = state.dayPauseDraft[index];
+          if (!previous || previous.type !== pause.type || (previous.source !== "manual" && !previous.locked)) return pause;
+          const startOffsetMinutes = translatePauseOffset(previous, state.dayPauseLastStart, shift.start);
+          return { ...pause, id: previous.id, startOffsetMinutes, endOffsetMinutes: startOffsetMinutes + pause.durationMinutes, source: "manual", locked: true };
+        });
+        const validation = CapBreaks.validateContinuousWorkLimit(shift, candidate);
+        state.dayPauseDraft = candidate;
+        state.dayPauseRequiresReset = !validation.valid;
+        state.dayPauseWarning = validation.valid ? "Les pauses manuelles ont été conservées à leur heure verrouillée." : `${validation.message} Recalcule les pauses ou déplace-les manuellement.`;
+      }
+    }
+    state.dayPauseLastStart = shift.start;
+    state.dayPauseLastEnd = shift.end;
+  }
+
+  function renderPauseEditor(plan) {
+    const amplitude = CapBreaks.calculateShiftAmplitude(plan.start, plan.end);
+    const ruleCode = CapBreaks.getPauseRuleForAmplitude(amplitude);
+    const totalMinutes = CapBreaks.calculateTotalPauseMinutes(state.dayPauseDraft);
+    setText("shiftPauseRule", ruleCode || "Aucune");
+    setText("shiftPauseTotal", totalMinutes ? formatDuration(totalMinutes) : "0 min");
+    setText("shiftEffectiveDuration", amplitude ? formatDuration(Math.max(0, amplitude - totalMinutes)) : "--");
+
+    $("shiftPauseList").innerHTML = state.dayPauseDraft.length ? state.dayPauseDraft.map((pause, index) => {
+      const clock = CapBreaks.getPauseClock(pause, plan.start);
+      const name = pause.type === "L" ? "Lunch" : "Break";
+      const source = pause.source === "manual" || pause.locked ? "Manuelle · verrouillée" : "Automatique";
+      return `<label class="pause-editor-row"><span class="pause-editor-type ${pause.type === "L" ? "lunch" : "break"}">${pause.type}</span><span class="pause-editor-copy"><strong>${name} — ${pause.durationMinutes} min</strong><small>${source}${clock.dayOffset > 0 ? " · lendemain" : ""}</small></span><input type="time" value="${clock.start}" data-pause-index="${index}" aria-label="Début de la pause ${pause.type}"></label>`;
+    }).join("") : '<div class="empty-state compact-empty">Aucune pause accordée pour cette amplitude.</div>';
+
+    const validationElement = $("shiftPauseValidation");
+    validationElement.className = "pause-validation";
+    if (!amplitude) {
+      validationElement.textContent = "Renseigne deux horaires différents pour calculer les pauses.";
+    } else if (state.dayPauseRequiresReset) {
+      validationElement.classList.add("invalid");
+      validationElement.textContent = state.dayPauseWarning || "Les pauses doivent être recalculées avant l’enregistrement.";
+    } else {
+      const validation = CapBreaks.validateContinuousWorkLimit(plan, state.dayPauseDraft);
+      validationElement.classList.add(validation.valid ? "valid" : "invalid");
+      validationElement.textContent = state.dayPauseWarning || (validation.valid
+        ? `Conforme à la limite des 3 h 30 · plus longue période : ${formatDuration(validation.longestContinuousWorkMinutes)}.`
+        : validation.message);
+    }
+    $("recalculatePauses").hidden = !amplitude || (!state.dayPauseDraft.length && !state.dayPauseRequiresReset);
   }
 
   function updateShiftDuration() {
@@ -905,10 +1094,10 @@
       end: $("shiftEnd").value,
       actualStart: $("actualStart").value,
       actualEnd: $("actualEnd").value,
-      breakMinutes: normalizeOptionalMinutes($("breakMinutes").value),
-      nightBreakMinutes: normalizeOptionalMinutes($("nightBreakMinutes").value) || 0
+      pauses: state.dayPauseDraft
     };
     setText("shiftDuration", formatDuration(shiftDurationMinutes(plan)));
+    renderPauseEditor(plan);
     const payroll = CapPayroll.buildPayrollDay({ dateKey: $("dayEditDate").value, plan });
     setText("shiftPaidDuration", payroll.paidMinutes ? `${formatDuration(payroll.paidMinutes)} · pause ${payroll.breakMinutes} min · ${payroll.source === "actual" ? "badgeage" : "± 5 min"}` : "--");
     const roles = getShiftRoles(plan);
@@ -916,6 +1105,27 @@
     status.textContent = roles.length ? roles.join(" + ") : "STANDARD";
     status.classList.toggle("open", roles.includes("OPEN"));
     status.classList.toggle("close", roles.includes("CLOSE"));
+  }
+
+  function setManualPauseStart(index, value) {
+    const pause = state.dayPauseDraft[index];
+    const shift = editorShift();
+    if (!pause || !isTime(value) || !isTime(shift.start) || !isTime(shift.end)) return;
+    const startOffsetMinutes = CapBreaks.getOffsetForClock(value, shift.start);
+    if (startOffsetMinutes === null) return;
+    state.dayPauseDraft[index] = {
+      ...pause,
+      startOffsetMinutes,
+      endOffsetMinutes: startOffsetMinutes + pause.durationMinutes,
+      source: "manual",
+      locked: true
+    };
+    const validation = CapBreaks.validateContinuousWorkLimit(shift, state.dayPauseDraft);
+    state.dayPauseRequiresReset = !validation.valid;
+    state.dayPauseWarning = validation.valid
+      ? `Pause ${pause.type} verrouillée manuellement à ${value}.`
+      : `${validation.message} Déplace la pause ou relance le calcul automatique.`;
+    updateShiftDuration();
   }
 
   function openSettings() {
@@ -962,7 +1172,7 @@
 
   function exportShifts() {
     const payload = {
-      app: "cap-contrat-shifts", version: 3, savedAt: new Date().toISOString(),
+      app: "cap-contrat-shifts", version: 4, savedAt: new Date().toISOString(),
       contract: { start: state.settings.start, end: state.settings.end }, shifts: state.shifts
     };
     downloadJson(payload, `cap-contrat-shifts-${toDateKey(new Date())}.json`);
@@ -1069,23 +1279,54 @@
     });
 
     $("dayWorked").addEventListener("change", updateDayFormState);
-    ["shiftStart", "shiftEnd", "actualStart", "actualEnd", "breakMinutes", "nightBreakMinutes"]
-      .forEach((id) => $(id).addEventListener("input", updateShiftDuration));
+    ["shiftStart", "shiftEnd"].forEach((id) => $(id).addEventListener("input", () => {
+      recalculateEditorPauses();
+      updateShiftDuration();
+    }));
+    ["actualStart", "actualEnd"].forEach((id) => $(id).addEventListener("input", updateShiftDuration));
+    $("shiftPauseList").addEventListener("input", (event) => {
+      const input = event.target.closest("[data-pause-index]");
+      if (input) setManualPauseStart(Number(input.dataset.pauseIndex), input.value);
+    });
+    $("recalculatePauses").addEventListener("click", () => {
+      recalculateEditorPauses(true);
+      updateShiftDuration();
+      showToast("Toutes les pauses ont été recalculées automatiquement");
+    });
     $("dayForm").addEventListener("submit", (event) => {
       event.preventDefault();
       const date = $("dayEditDate").value;
       if (!isDateKey(date)) return;
       const attraction = document.querySelector('input[name="attraction"]:checked');
+      const worked = $("dayWorked").checked;
+      const start = isTime($("shiftStart").value) ? $("shiftStart").value : "";
+      const end = isTime($("shiftEnd").value) ? $("shiftEnd").value : "";
+      let pauses = [];
+      let pauseRuleCode = "";
+      let pauseValidation = emptyPauseData().validationStatus;
+      if (worked && start && end) {
+        const amplitude = CapBreaks.calculateShiftAmplitude(start, end);
+        if (!amplitude) { showToast("Le début et la fin du shift doivent être différents"); return; }
+        const shift = { id: date, dateKey: date, start, end };
+        pauseValidation = CapBreaks.validateContinuousWorkLimit(shift, state.dayPauseDraft);
+        if (state.dayPauseRequiresReset || !pauseValidation.valid) {
+          showToast(pauseValidation.message || "Recalcule les pauses avant d’enregistrer");
+          return;
+        }
+        pauses = CapBreaks.normalizePauses(state.dayPauseDraft, shift);
+        pauseRuleCode = CapBreaks.getPauseRuleForAmplitude(amplitude);
+      }
       state.shifts[date] = {
-        worked: $("dayWorked").checked,
-        start: isTime($("shiftStart").value) ? $("shiftStart").value : "",
-        end: isTime($("shiftEnd").value) ? $("shiftEnd").value : "",
+        worked,
+        start,
+        end,
         actualStart: isTime($("actualStart").value) ? $("actualStart").value : "",
         actualEnd: isTime($("actualEnd").value) ? $("actualEnd").value : "",
-        breakMinutes: normalizeOptionalMinutes($("breakMinutes").value),
-        nightBreakMinutes: normalizeOptionalMinutes($("nightBreakMinutes").value) || 0,
+        pauses,
+        pauseRuleCode,
+        pauseValidation,
         attraction: attraction && (attraction.value === "HSM" || attraction.value === "STT") ? attraction.value : "",
-        provisional: $("dayWorked").checked && $("dayProvisional").checked,
+        provisional: worked && $("dayProvisional").checked,
         note: $("shiftNote").value.trim().slice(0, 100)
       };
       saveShifts(); closeSheets(); renderAll(); showToast("Journée enregistrée dans le planning");

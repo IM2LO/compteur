@@ -7,10 +7,16 @@ function day(dateKey, plan) {
   return payroll.buildPayrollDay({ dateKey, plan: { worked: true, ...plan } });
 }
 
-assert.equal(payroll.automaticBreakMinutes(435), 15);
-assert.equal(payroll.automaticBreakMinutes(436), 60);
-assert.equal(payroll.automaticBreakMinutes(540), 60);
-assert.equal(payroll.automaticBreakMinutes(541), 75);
+assert.equal(payroll.automaticBreakMinutes(289), 0);
+assert.equal(payroll.automaticBreakMinutes(290), 15);
+assert.equal(payroll.automaticBreakMinutes(359), 15);
+assert.equal(payroll.automaticBreakMinutes(360), 30);
+assert.equal(payroll.automaticBreakMinutes(374), 30);
+assert.equal(payroll.automaticBreakMinutes(375), 45);
+assert.equal(payroll.automaticBreakMinutes(434), 45);
+assert.equal(payroll.automaticBreakMinutes(435), 60);
+assert.equal(payroll.automaticBreakMinutes(554), 60);
+assert.equal(payroll.automaticBreakMinutes(555), 75);
 
 const example = day("2026-06-01", { start: "15:35", end: "23:25" });
 assert.deepEqual(
@@ -35,6 +41,8 @@ assert.equal(actual.nightMinutes, 80);
 
 const overnight = day("2026-06-03", { start: "22:55", end: "06:55" });
 assert.equal(overnight.amplitudeMinutes, 490);
+assert.equal(overnight.breakMinutes, 60);
+assert.equal(overnight.nightBreakMinutes, 60);
 assert.equal(overnight.paidMinutes, 430);
 assert.equal(overnight.nightMinutes, 430);
 
